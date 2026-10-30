@@ -22,7 +22,7 @@ GitHub 仓库启用 Settings → Releases → Enable release immutability。已�
 
 ## 发版
 
-1. 修改根目录 `VERSION` 为新的稳定版本 `X.Y.Z`，提交并推送 main，等待检查通过。
+1. 修改根目录 `VERSION` 为新的稳定版本 `X.Y.Z`，并新增 `docs/releases/X.Y.Z.md`：首行作为设备清单说明，全文作为 GitHub Release 发布说明。提交并推送 main，等待检查通过。
 2. 创建并推送对应 Tag，例如 `git tag -a v0.5.1 -m 'YA 0.5.1'`、`git push origin v0.5.1`。Tag提交必须属于main；版本最长31字节。
 3. `Check and release firmware` 从 Tag 构建签名应用，检查板型、布局、版本、6MiB限制、签名、依赖锁、测试与公开内容；从最近三个较低正式Release取原始签名镜像，生成并逐字节还原验证更小的增量包。正式构建禁止测试CA及故障注入，不自动生成替代生产密钥。
 4. 仅当网页与固件检查都通过，先创建Draft Release，上传所有附件，重新下载并校验SHA256SUMS，再发布为Latest。重跑只允许更新尚未发布的Draft，已发布文件不得覆盖。

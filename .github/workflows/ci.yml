@@ -76,7 +76,10 @@ jobs:
       - name: Package and verify release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          .tools/venv/bin/python tools/export_artifacts.py --build build-release --out artifacts/publish --notes 'Workers 在线更新、GitHub 自动构建发布与源码脱敏'
+          release_notes="docs/releases/${GITHUB_REF_NAME#v}.md"
+          test -s "$release_notes"
+          release_summary="$(head -n 1 "$release_notes")"
+          .tools/venv/bin/python tools/export_artifacts.py --build build-release --out artifacts/publish --notes "$release_summary"
           GH_TOKEN="${{ github.token }}" .tools/venv/bin/python tools/delta_release.py artifacts/publish --github-bases
           .tools/venv/bin/python tools/verify_release.py artifacts/publish --tag "$GITHUB_REF_NAME" --provenance
           .tools/venv/bin/python tools/check_public.py --tracked --artifacts artifacts/publish
@@ -113,7 +116,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > /tmp/ya-release-draft; then
             test "$(cat /tmp/ya-release-draft)" = true || { echo 'Published releases cannot be replaced'; exit 1; }
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "YA $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "YA $GITHUB_REF_NAME" --notes-file "../../docs/releases/${GITHUB_REF_NAME#v}.md"
           fi
           gh release upload "$GITHUB_REF_NAME" ./* --clobber
           mkdir /tmp/ya-release-verify
