@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "ya.hpp"
 #include "power.hpp"
+#include "wake_handoff.hpp"
 #include "ui_policy.hpp"
 #include <ctime>
 #include <string>
@@ -1476,8 +1477,10 @@ static bool close_dropdown() {
   return false;
 }
 static void input_tick(lv_timer_t *) {
-  clamp_dropdowns();
-  auto events = board_key_events();
+  auto events = power_wake::read_input(power_wake_ui, wake, [] {
+    clamp_dropdowns();
+    return board_key_events();
+  });
   if (!events)
     return;
   activity = now_ms();
@@ -1599,8 +1602,7 @@ static void update_header(const Status &s, const Config &c) {
   update_notification(s);
 }
 static void refresh(lv_timer_t *) {
-  if (power_wake_ui.exchange(false))
-    wake();
+  power_wake::consume_ui(power_wake_ui, wake);
   ui_heartbeat = now_ms();
   completions();
   int requested = requested_page.exchange(-1);

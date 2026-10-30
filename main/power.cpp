@@ -1,6 +1,7 @@
 #include "notifications.hpp"
 #include "power.hpp"
 #include "power_policy.hpp"
+#include "wake_handoff.hpp"
 #include "data.hpp"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
@@ -19,6 +20,7 @@ PowerPrefs prefs;
 SemaphoreHandle_t mutex;
 esp_pm_lock_handle_t awake_lock = nullptr;
 std::atomic<int64_t> notify_until{0}, last_notify{-60000}, hold_until{0};
+power_wake::Handoff wake_handoff;
 bool silent = false;
 std::atomic<bool> paused{false}, syncing{false};
 int64_t off_at = 0, budget = 0;
@@ -39,11 +41,12 @@ void resume() {
     return;
   esp_pm_lock_acquire(awake_lock);
   bsp_display_sleep_set(false);
+  // Publish the logical wake before allowing UI input timers to run again.
+  power_wake_ui = true;
+  screen_sleeping = false;
   esp_lv_adapter_resume();
   paused = false;
   power_paused = false;
-  power_wake_ui = true;
-  screen_sleeping = false;
   silent = false;
   off_at = 0;
   syncing = false;
@@ -67,6 +70,8 @@ bool suspend() {
   return true;
 }
 void deep() {
+  if (wake_handoff.pending())
+    return;
   if (data_busy() || !data_checkpoint() || !notifications_checkpoint())
     return;
   bool pending;
@@ -88,6 +93,9 @@ void deep() {
     if (state.sd_mounted)
       return;
   }
+  // Any later return aborts preparation and restores a card we unmounted.
+  // Declared before mutation so its lock is released before remounting.
+  power_policy::RestoreStorageOnExit restore_storage(mounted, storage_mount);
   if (!suspend())
     return;
   wifi_runtime(false);
@@ -113,6 +121,8 @@ void deep() {
   // Do not use PMU shutdown; charging and RTC supplies stay on.
   vTaskDelay(pdMS_TO_TICKS(100));
   if (!notifications_checkpoint()) return;
+  if (wake_handoff.pending() || held() || !screen_sleeping)
+    return;
   esp_deep_sleep_start();
 }
 } // namespace
@@ -154,6 +164,12 @@ void power_init() {
   esp_sleep_enable_gpio_wakeup();
 }
 bool power_silent_boot() { return silent; }
+void power_request_wake() {
+  wake_handoff.request([] {
+    if (main_task_handle)
+      xTaskNotifyGive(main_task_handle);
+  });
+}
 PowerProfile power_profile() {
   bool usb;
   {
@@ -229,13 +245,20 @@ void power_notify() {
 bool power_notification_active() { return now_ms() < notify_until.load(); }
 void power_hold(unsigned ms) { hold_until = now_ms() + std::min(ms, 120000u); }
 void power_tick() {
+  const bool physical_wake = wake_handoff.publish(screen_sleeping, power_wake_ui);
+  if (physical_wake) {
+    silent = false;
+    off_at = 0;
+    syncing = false;
+  }
   bool pending;
   {
     Guard g(state_mutex);
     pending = state.pending;
   }
   auto p = power_profile();
-  if (power_policy::keep_radios_awake(screen_sleeping, p.mode, ota_busy || pending, held())) {
+  if (power_policy::keep_radios_awake(screen_sleeping, p.mode, ota_busy || pending,
+                                     physical_wake)) {
     // Apply even when resume() is a no-op: a notification or power-source change
     // may have resumed the display while leaving the radios suspended.
     wifi_runtime(true);

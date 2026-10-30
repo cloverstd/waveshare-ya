@@ -189,7 +189,7 @@ void board_audio_test();
 void board_volume();
 int board_audio_mute_state();
 bool board_key();
-// One-shot debounced events: back=1, home=2, screen toggle=4, shutdown=8.
+// Consume events sampled independently of LVGL: back=1, home=2, toggle=4, shutdown=8.
 uint32_t board_key_events();
 void board_shutdown();
 void storage_mount();
