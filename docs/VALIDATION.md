@@ -1,5 +1,14 @@
 # 验收记录
 
+## 日志单行工具栏（2026-10-30，独立开发分支）
+
+- 基于 `1d0c032`，在 `build-worktrees/logs-toolbar` / `feat/logs-toolbar` 开发。级别下拉、计数、暂停/恢复刷新及清空合并为一行；级别仅显示 `OFF / ERR / WRN / INF / DBG / VRB`。操作按钮使用现有暂停、刷新、垃圾桶图标，触摸区域均为 44×44px。下拉继续复用原异步设置完成处理和安全区约束。
+- 工具栏高 44px、下拉宽 96px；计数使用剩余宽度，丢弃数仅在非零时显示，过长计数在本行省略。日志卡片由 162px 增至 290px（增加约 79%），仍在 432×342px 正文及原有圆角安全区内。没有新增字体字符，ASCII 缩写及图标复用已有字库，无需重新生成中文字体。
+- 固定 ESP-IDF 5.5.5 / BSP 2.0.1 / LVGL 9.3.0、GCC `esp-14.2.0_20260121` 编译通过，依赖版本与哈希检查通过。保留本地构建版本 0.5.1，仅作为开发候选，未替换正式 Release。签名应用 2,232,320 字节，SHA-256 `a5e933b92bb1bf8b1fc9e5f03851832d1242d13b90ddb573e7ab2b136e6b4b63`，既有 RSA 公钥验证通过。
+- 定向主机检查：`YA_BUILD_DIR=build-toolbar .tools/venv/bin/python -m pytest -q tests/test_native.py tests/test_stack_budget.py -k 'log_buffer or ui_policy or static_stack'`，8 项通过，6 项未选中；覆盖日志缓冲、页面返回策略及现有编译器栈预算，没有跳过。
+- 离线预览使用同一 LVGL 9.3.0、项目字库及直接从修改后 `ui.cpp` 提取的日志 UI 函数，日志与系统接口使用主机替身。已检查运行、暂停、恢复、滑动暂停、清空、丢弃计数、空列表和下拉展开；断言工具栏高 44px、日志区 432×290px、底边 y=455，控件及下拉均处于共享安全区。人工检查渲染图后，将下拉从 84px 调至 96px，消除 WRN 与箭头挤压，再次渲染及编译通过。
+- 证据位于本 worktree 的 `artifacts/logs-toolbar/`：构建、签名、主机检查日志及 `logs-toolbar*.png`。这些是合成日志的离线软件渲染图，不是设备截图；没有 USB 或 OTA 安装。实际屏幕触摸、面板显示、设置持久化及真机反复进出页面仍待交付设备验收。
+
 ## 0.5.1 Actions正式发布与线上验证（2026-10-30）
 
 - 源提交 `1a319ce89e799d6ee86392655cd4c082c8199e8f`，Tag `v0.5.1`。主分支完整检查[40989901697](https://github.com/cloverstd/waveshare-ya/actions/runs/40989901697)成功；正式Tag的web、firmware和publish全部成功，见[40990407586](https://github.com/cloverstd/waveshare-ya/actions/runs/40990407586)。正式Release及附件已由GitHub标记immutable，不替换该版本内容。
