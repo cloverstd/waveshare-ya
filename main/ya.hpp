@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include "wifi.hpp"
+#include "battery_estimator.hpp"
 namespace ya {
 constexpr const char *PRODUCT = "waveshare-ya", *BOARD = "esp32-s3-touch-amoled-2.16",
                      *LAYOUT = "ab6-v1";
@@ -52,6 +53,7 @@ struct Battery {
   int percent = -1, millivolts = 0;
   float temperature = 0;
   int64_t sampled = 0;
+  battery_stats::Summary stats;
 };
 struct Peer {
   char name[48]{}, address[32]{};

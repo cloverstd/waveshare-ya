@@ -2,6 +2,7 @@
 #include "esp_mac.h"
 #include "notifications.hpp"
 #include "cJSON.h"
+#include "battery_json.hpp"
 #include "esp_app_desc.h"
 #include "esp_random.h"
 #include "host/ble_gap.h"
@@ -121,6 +122,7 @@ static void rpc(uint16_t conn, const char *text) {
         cJSON_AddBoolToObject(result, "ble_services_valid", s.ble_services_valid);
         cJSON_AddNumberToObject(result, "battery", s.battery.valid ? s.battery.percent : -1);
         cJSON_AddBoolToObject(result, "charging", s.battery.valid && s.battery.charging);
+        add_battery_stats(result, s.battery.stats);
         ok = true;
       } else if (!strcmp(op->valuestring, "set")) {
         auto *k = cJSON_GetObjectItem(j, "key");

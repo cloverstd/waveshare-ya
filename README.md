@@ -16,6 +16,7 @@ ESP32-S3-Touch-AMOLED-2.16 专用，ESP-IDF 5.5.5 / 官方 BSP 2.0.1 / LVGL 9.3.
 - [BLE 协议](docs/BLE.md)
 - [Chrome 数据站与 0.3.0 使用说明](docs/COMPANION.md)
 - [省电与分阶段休眠设计（0.3.0 源码已实现，硬件待验收）](docs/POWER_MANAGEMENT.md)
+- [电池耗电统计与充放电时间估算（开发中，实机待校准）](docs/BATTERY_STATS.md)
 - [统一数据协议与多网关设计（0.3.0 源码已实现，硬件待验收）](docs/DATA_PROTOCOL.md)
 - [验收记录与未验证项目](docs/VALIDATION.md)
 

@@ -6,6 +6,7 @@
 #include <ctime>
 #include <new>
 #include "cJSON.h"
+#include "battery_json.hpp"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
@@ -223,6 +224,10 @@ static void task(void *) {
         cJSON_AddBoolToObject(out, "usb", s.battery.usb);
         cJSON_AddBoolToObject(out, "charging", s.battery.charging);
         cJSON_AddNumberToObject(out, "temperature", s.battery.temperature);
+        cJSON_AddBoolToObject(out, "battery_present", s.battery.present);
+        cJSON_AddBoolToObject(out, "battery_full", s.battery.full);
+        cJSON_AddNumberToObject(out, "battery_sample_age_ms", now_ms() - s.battery.sampled);
+        add_battery_stats(out, s.battery.stats);
         cJSON_AddBoolToObject(out, "sd", s.sd_mounted);
         cJSON_AddNumberToObject(out, "brightness", cf.brightness);
         cJSON_AddNumberToObject(out, "fps", cf.fps);

@@ -443,9 +443,24 @@ static void sample_memory() {
 }
 static void worker(void *) {
   int64_t sampled = 0;
+  int64_t battery_sampled = -60000;
+  static battery_stats::Tracker battery_tracker;
   Command c;
   for (;;) {
     service_heartbeat = now_ms();
+    // Keep light-sleep monitoring on the existing worker with sparse PMU reads.
+    // Deep sleep reboots the tracker; never bridge an unobserved power-source change.
+    if (now_ms() - battery_sampled >= (power_paused ? 60000 : 1000)) {
+      auto b = battery_read();
+      battery_sampled = b.sampled;
+      b.stats = battery_tracker.update({b.sampled, b.percent, b.valid, b.present, b.usb,
+                                        b.charging, b.discharging, b.full});
+      {
+        Guard g(state_mutex);
+        state.battery = b;
+      }
+      publish(BATTERY);
+    }
     if (power_paused) {
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
@@ -556,12 +571,6 @@ static void worker(void *) {
     time_service_tick();
     if (now_ms() - sampled >= 1000) {
       sampled = now_ms();
-      auto b = battery_read();
-      {
-        Guard g(state_mutex);
-        state.battery = b;
-      }
-      publish(BATTERY);
       board_volume();
       wifi_tick();
       ble_tick();

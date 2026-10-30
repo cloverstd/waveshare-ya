@@ -42,6 +42,8 @@ python -m esptool --chip esp32s3 --port PORT write_flash 0 private/backups/origi
 
 新增日志应用诊断页面ID14，默认Warning，使用及构建缓存迁移见[LOGS.md](LOGS.md)。
 
+电池统计开发分支在页面2显示耗电统计与充放电剩余时间，USB/BLE `status`包含`battery_stats`；算法、采样和重启/深睡重置边界见[BATTERY_STATS.md](BATTERY_STATS.md)。
+
 可使用 `tools/bootstrap.sh` 完成项目内环境准备；已有 SDK 或签名密钥不会被覆盖。需要重新生成字体时使用 `tools/bootstrap.sh --fonts`，中文字体固定 weight=450、22px。
 
 首次转换分区的可复用入口为 `tools/first_flash.py --port PORT --backup BACKUP --backup-sha256 SHA256`。它拒绝校验失败的备份和 test 版本，校验签名后才刷写。该工具会重置应用配置，只用于首次安装；正常迭代必须使用 OTA。

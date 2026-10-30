@@ -1,5 +1,18 @@
 # 验收记录
 
+## 电池耗电与充放电时间估算开发分支（2026-10-30）
+
+- 独立worktree分支`feat/battery-estimates`，基于已提交主分支`1d0c032`；未带入主工作区未提交的OTA或其他并行修改。版本标记`0.5.1-battery-dev`，未发布、未合并、未安装设备。
+- “系统状态”新增监测时长、电量消耗/增加、本段与近期速率、预计剩余可用时间/充满时间。USB/BLE状态新增一致的`battery_stats`对象。说明和充电后段经验权重见[BATTERY_STATS.md](BATTERY_STATS.md)；权重尚未实机标定，不是电流、容量或能量实测。
+- 复用服务线程和PMU驱动：前台每秒、服务暂停时每分钟采样；约1.1KiB固定RAM历史，不新增任务或持久写入。供电/充电切换、样本失效/中断、电量跳变时重建监测段，重启/深睡后重新采样。中文字体用固定lv_font_conv 1.5.3重新生成，保留原许可。
+- ESP-IDF `b774170ff46c393eeb5e495ea37936038d3f4f4f`（5.5.5）、GCC `esp-14.2.0_20260121`、BSP2.0.1、LVGL9.3.0签名构建通过，`dependencies.lock`版本与哈希比对通过。worktree共享SDK时先解析真实路径；最初配置选到PATH中的GCC15.2后被IDF版本检查拒绝，清理本次缓存并以固定GCC重新完成构建，没有放宽版本检查。
+- 签名应用2,232,320字节，小于6MiB槽；SHA-256 `2f72dd043f11c51b46f5b0956d66003f7e8e0fd3c5bc92434820a8516e3f6349`，现有RSA公钥验证成功。A/B与rollback配置保留；故障注入、临时HTTPS CA、硬件Secure Boot和Flash加密关闭，不写eFuse。
+- `YA_BUILD_DIR=build-battery .tools/venv/bin/python -m pytest -q tests`：57项通过，无跳过。新增固件算法回放覆盖稳定耗电、近期速率变化/环形窗口、SOC抖动/校正、无电池/无效电量、时间回退/重复/中断、USB供电不等于充电、充电后段修正、停滞/恢复、100%与PMU充满区别、低电量和100天运行时长。该回放另以AddressSanitizer/UndefinedBehaviorSanitizer运行通过。
+- 编译器静态栈记录：`app_main`112字节、`refresh`2528字节、USB诊断`task`1728字节、服务`worker`656字节；现有栈预算检查全部通过。这不代表实机最小堆、连续内存或运行时栈已测。公开源文件隐私检查和`git diff --check`通过。
+- 本轮无USB写入或OTA，无真实电池周期、显示/按键/触摸验收、BLE端到端状态读取、睡醒和无线并发内存验收，也未启动或声称完成soak。需要实机分别记录亮屏/息屏/轻睡的消耗，以及低电量至充满的实际时间与估计误差；充电保护暂停、弱供电、供电切换等条件亦待验收。
+
+本机证据：`artifacts/battery-build.log`、`battery-tests.log`、`battery-signature.log`、`battery-image.json`；签名应用位于`build-battery/waveshare-ya.bin`。这些文件不提交、不纳入公开源码包；本分支没有执行对外发布。
+
 ## 0.5.1 Actions正式发布与线上验证（2026-10-30）
 
 - 源提交 `1a319ce89e799d6ee86392655cd4c082c8199e8f`，Tag `v0.5.1`。主分支完整检查[40989901697](https://github.com/cloverstd/waveshare-ya/actions/runs/40989901697)成功；正式Tag的web、firmware和publish全部成功，见[40990407586](https://github.com/cloverstd/waveshare-ya/actions/runs/40990407586)。正式Release及附件已由GitHub标记immutable，不替换该版本内容。
