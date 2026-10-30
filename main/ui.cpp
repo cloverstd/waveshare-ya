@@ -606,9 +606,10 @@ static void clamp_dropdowns() {
       lv_obj_set_pos(popup, safe_x, safe_y);
   }
 }
-static void select(lv_obj_t *p, const char *title, const char *options, int selected,
-                   const char *key) {
-  label(p, title);
+static lv_obj_t *select(lv_obj_t *p, const char *title, const char *options, int selected,
+                        const char *key) {
+  if (title)
+    label(p, title);
   auto *d = lv_dropdown_create(p);
   lv_obj_set_size(d, LV_PCT(100), 52);
   lv_dropdown_set_options(d, options);
@@ -651,6 +652,7 @@ static void select(lv_obj_t *p, const char *title, const char *options, int sele
           sync_controls(config(), system_prefs());
       },
       LV_EVENT_VALUE_CHANGED, ctrl);
+  return d;
 }
 void ui_logs_destroy() {
   log_list = log_summary = log_pause_button = nullptr;
@@ -665,28 +667,38 @@ void ui_logs(lv_obj_t *parent) {
   lv_obj_set_size(view, LV_PCT(100), 342);
   lv_obj_set_style_pad_row(view, 8, 0);
   lv_obj_remove_flag(view, LV_OBJ_FLAG_SCROLLABLE);
-  select(view, "记录级别", "关闭\nError 错误\nWarning 警告\nInfo 信息\nDebug 调试\nVerbose 详细",
-         logs_level(), "log_level");
   auto *row = lv_obj_create(view); plain(row);
   lv_obj_set_size(row, LV_PCT(100), 44);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(row, 12, 0);
-  log_pause_button = button(row, "暂停刷新", [](lv_event_t *) {
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 8, 0);
+  auto *level = select(row, nullptr, "OFF\nERR\nWRN\nINF\nDBG\nVRB", logs_level(), "log_level");
+  lv_obj_set_size(level, 96, 44);
+  lv_obj_set_style_pad_hor(level, 8, 0);
+  lv_obj_set_style_text_font(level, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(lv_dropdown_get_list(level), &lv_font_montserrat_20, 0);
+  log_summary = label(row, "0/100 覆盖0", 0);
+  lv_obj_set_flex_grow(log_summary, 1);
+  lv_label_set_long_mode(log_summary, LV_LABEL_LONG_DOT);
+  log_pause_button = button(row, LV_SYMBOL_PAUSE, [](lv_event_t *) {
     log_paused = !log_paused;
-    set_text(lv_obj_get_child(log_pause_button, 0), log_paused ? "继续刷新" : "暂停刷新");
+    set_text(lv_obj_get_child(log_pause_button, 0), log_paused ? LV_SYMBOL_REFRESH : LV_SYMBOL_PAUSE);
     if (!log_paused) { log_revision = ~0u; log_refresh_at = 0; logs_refresh(); }
   });
-  lv_obj_set_size(log_pause_button, 210, 44);
-  auto *clear = button(row, "清空日志", [](lv_event_t *) {
+  lv_obj_set_size(log_pause_button, 44, 44);
+  lv_obj_set_style_pad_all(log_pause_button, 0, 0);
+  lv_obj_set_style_text_font(log_pause_button, &lv_font_montserrat_20, 0);
+  auto *clear = button(row, LV_SYMBOL_TRASH, [](lv_event_t *) {
     if (!logs_clear()) { notice("日志忙，请重试"); return; }
     log_paused = false; log_revision = ~0u; log_refresh_at = 0;
-    set_text(lv_obj_get_child(log_pause_button, 0), "暂停刷新");
+    set_text(lv_obj_get_child(log_pause_button, 0), LV_SYMBOL_PAUSE);
     logs_refresh();
   });
-  lv_obj_set_size(clear, 210, 44);
-  log_summary = label(view, "本次开机 · 最近100条");
-  lv_obj_set_height(log_summary, 26);
-  log_list = card(view, 0x151e2b, 162); column(log_list);
+  lv_obj_set_size(clear, 44, 44);
+  lv_obj_set_style_pad_all(clear, 0, 0);
+  lv_obj_set_style_text_font(clear, &lv_font_montserrat_20, 0);
+  log_list = card(view, 0x151e2b, 0); column(log_list);
+  lv_obj_set_flex_grow(log_list, 1);
   lv_obj_set_style_pad_all(log_list, 10, 0);
   lv_obj_add_flag(log_list, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scroll_dir(log_list, LV_DIR_VER);
@@ -694,7 +706,7 @@ void ui_logs(lv_obj_t *parent) {
   lv_obj_add_event_cb(log_list, [](lv_event_t *) {
     if (log_rendering) return;
     log_paused = true;
-    set_text(lv_obj_get_child(log_pause_button, 0), "继续刷新");
+    set_text(lv_obj_get_child(log_pause_button, 0), LV_SYMBOL_REFRESH);
   }, LV_EVENT_SCROLL_BEGIN, nullptr);
   auto *memory = heap_caps_malloc(sizeof(LogBuffer), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!memory) { label(log_list, "日志显示内存不足"); return; }
@@ -709,8 +721,12 @@ static void logs_refresh() {
   if (log_revision == log_view->revision && log_dropped == dropped) return;
   log_revision = log_view->revision; log_dropped = dropped;
   char summary[96];
-  snprintf(summary, sizeof(summary), "%u/100 · 覆盖%lu · 丢弃%lu", log_view->count,
-           (unsigned long)log_view->overwritten, (unsigned long)dropped);
+  if (dropped)
+    snprintf(summary, sizeof(summary), "%u/100 覆盖%lu 丢弃%lu", log_view->count,
+             (unsigned long)log_view->overwritten, (unsigned long)dropped);
+  else
+    snprintf(summary, sizeof(summary), "%u/100 覆盖%lu", log_view->count,
+             (unsigned long)log_view->overwritten);
   set_text(log_summary, summary);
   log_rendering = true;
   lv_obj_clean(log_list);
