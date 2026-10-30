@@ -20,3 +20,7 @@
 - espressif__zlib: [espressif__zlib-LICENSE.txt](espressif__zlib-LICENSE.txt)
 - waveshare__esp32_s3_touch_amoled_2_16: [waveshare__esp32_s3_touch_amoled_2_16-LICENSE.txt](waveshare__esp32_s3_touch_amoled_2_16-LICENSE.txt)
 - waveshare__esp_lcd_touch_cst9217: [waveshare__esp_lcd_touch_cst9217-license.txt.txt](waveshare__esp_lcd_touch_cst9217-license.txt.txt)
+
+- esp_delta_ota 1.1.4: [Apache-2.0](esp_delta_ota-LICENSE.txt)
+- detools（固件内嵌0.52.0，生成工具0.53.0）: [BSD-2-Clause](detools-LICENSE.txt)
+- heatshrink: [ISC许可通知](heatshrink-NOTICE.txt)

@@ -15,6 +15,7 @@
 #include "esp_image_format.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_delta_ota.h"
 #include "esp_random.h"
 #include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
@@ -29,10 +30,34 @@ static void worker(void *);
 static SemaphoreHandle_t ota_mutex;
 static char token[33]{};
 static int64_t expires = 0;
-static std::atomic<bool> checking{false};
+static std::atomic<bool> checking{false}, recheck_requested{false};
 using ota_contract::https_url;
 using ota_contract::Release;
 static Release release;
+static ota_contract::Delta delta;
+static OtaMode install_mode = OtaMode::FULL;
+static void sha_hex(const uint8_t *digest, char *hex) {
+  for (int i=0; i<32; ++i) sprintf(hex+2*i,"%02x",digest[i]);
+}
+static bool base_identity(size_t &size, char *sha) {
+  const auto *p = esp_ota_get_running_partition();
+  esp_image_metadata_t metadata{};
+  esp_partition_pos_t position{p->address,p->size};
+  if (esp_image_verify(ESP_IMAGE_VERIFY,&position,&metadata) != ESP_OK) return false;
+  size = metadata.image_len;
+  mbedtls_sha256_context hash;
+  mbedtls_sha256_init(&hash); mbedtls_sha256_starts(&hash,0);
+  auto *buffer=static_cast<uint8_t*>(heap_caps_malloc(4096,MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if(!buffer) { mbedtls_sha256_free(&hash); return false; }
+  uint8_t digest[32]; bool ok = true;
+  for (size_t off=0; off<size; off+=4096) {
+    size_t n=std::min((size_t)4096,size-off);
+    if (esp_partition_read(p,off,buffer,n) != ESP_OK) { ok=false; break; }
+    mbedtls_sha256_update(&hash,buffer,n);
+  }
+  mbedtls_sha256_finish(&hash,digest); mbedtls_sha256_free(&hash);
+  free(buffer); sha_hex(digest,sha); return ok;
+}
 const char *ota_phase_name(OtaPhase phase) {
   switch (phase) {
   case OtaPhase::IDLE:
@@ -70,6 +95,7 @@ static void status(OtaPhase phase, const char *s, int p = -1, bool reset = false
       state.ota_progress = 0;
       state.ota_received = 0;
       state.ota_total = total;
+      state.ota_written = 0;
     }
     if (p >= 0)
       state.ota_progress = p;
@@ -87,12 +113,14 @@ static bool acquire() {
       !update_power_allowed(b.valid, now_ms() - b.sampled < 5000, b.usb, b.present, b.percent))
     return false;
   ota_busy = true;
+  state.ota_active = true;
   return true;
 }
 static void fail(const char *s) {
   status(OtaPhase::FAILED, s);
   diag_set("ota_result", s);
   ota_busy = false;
+  { Guard g(state_mutex); state.ota_active = false; }
 }
 static const char *write_error(esp_err_t error) {
   if (error == ESP_ERR_TIMEOUT)
@@ -151,16 +179,17 @@ class Writer {
                  sizeof(esp_app_desc_t) + sizeof(FirmwareIdentity)]{};
   size_t filled = 0;
   int64_t last_progress = 0;
+  bool report;
   char expected_version[32]{};
   mbedtls_sha256_context hash;
 
 public:
-  explicit Writer(size_t n, const char *version = nullptr) : expected(n) {
+  explicit Writer(size_t n, const char *version = nullptr, bool progress = true) : expected(n), report(progress) {
     if (version)
       strlcpy(expected_version, version, sizeof(expected_version));
     mbedtls_sha256_init(&hash);
     mbedtls_sha256_starts(&hash, 0);
-    status(OtaPhase::TRANSFERRING, "正在接收并写入固件", 0, true, n);
+    if (report) status(OtaPhase::TRANSFERRING, "正在接收并写入固件", 0, true, n);
     last_progress = now_ms();
   }
   ~Writer() {
@@ -175,7 +204,7 @@ public:
     }
   }
   esp_err_t feed(const void *data, size_t n) {
-    if (total + n > expected)
+    if (n > expected - total)
       return ESP_ERR_INVALID_SIZE;
     auto *bytes = (const uint8_t *)data;
     if (!active) {
@@ -223,12 +252,15 @@ public:
     total += n;
     {
       Guard g(state_mutex);
-      state.ota_received = total;
-      state.ota_progress = int(total * 100 / expected);
+      state.ota_written = total;
+      if (report) {
+        state.ota_received = total;
+        state.ota_progress = int(total * 100 / expected);
+      }
     }
     // Flash writes are streamed; publishing every 4 KiB needlessly floods the UI queue.
     const int64_t now = now_ms();
-    if (now - last_progress >= 100) {
+    if (report && now - last_progress >= 100) {
       last_progress = now;
       publish(OTA);
     }
@@ -283,6 +315,7 @@ static esp_err_t upload(httpd_req_t *r) {
     return error(r, "413 Payload Too Large", "固件大小无效", r->content_len);
   if (!acquire())
     return error(r, "409 Conflict", "正在升级、等待验证或电量不足", r->content_len);
+  { Guard g(state_mutex); state.ota_mode=OtaMode::FULL; }
   Writer w(r->content_len);
   char b[4096];
   size_t left = r->content_len;
@@ -336,6 +369,8 @@ static esp_err_t info(httpd_req_t *r) {
   cJSON_AddStringToObject(j, "phase", ota_phase_name(s.ota_phase));
   cJSON_AddNumberToObject(j, "received", s.ota_received);
   cJSON_AddNumberToObject(j, "total", s.ota_total);
+  cJSON_AddNumberToObject(j, "written", s.ota_written);
+  cJSON_AddStringToObject(j, "mode", s.ota_mode==OtaMode::DELTA ? "delta" : "full");
   cJSON_AddBoolToObject(j, "pending", s.pending);
   char *str = cJSON_PrintUnformatted(j);
   httpd_resp_set_type(r, "application/json");
@@ -456,6 +491,24 @@ static esp_http_client_handle_t client(const char *url, ResponseHeaders &headers
     esp_http_client_set_header(h, "Accept-Encoding", "identity");
   return h;
 }
+static bool read_json(const char *url, char *body, size_t &size, int64_t deadline) {
+  ResponseHeaders headers; auto h = client(url,headers); bool ok = false;
+  if (h && esp_http_client_open(h,0) == ESP_OK) {
+    auto len = esp_http_client_fetch_headers(h); size = 0;
+    if (esp_http_client_get_status_code(h)==200 && len>0 && len<4096 &&
+        !esp_http_client_is_chunked_response(h) && response_type(headers,"application/json")) {
+      while (size<(size_t)len && now_ms()<deadline) {
+        int n=esp_http_client_read(h,body+size,len-size);
+        if (n<=0) break;
+        size+=n;
+      }
+      ok=size==(size_t)len && now_ms()<deadline && esp_http_client_is_complete_data_received(h);
+      body[size]=0;
+    }
+  }
+  if(h) esp_http_client_cleanup(h);
+  return ok;
+}
 static void check_task(void *) {
   const int64_t deadline = now_ms() + 30000;
   auto c = config();
@@ -489,19 +542,44 @@ static void check_task(void *) {
   }
   if (h)
     esp_http_client_cleanup(h);
+  ota_contract::Delta candidate;
+  bool different = ok && ota_contract::newer(next.version, esp_app_get_description()->version);
+  bool has_delta = false;
+  const char *delta_note = "此版本未提供增量包";
+  if (different && next.delta_index_url[0]) {
+    char body[4097], base_sha[65]; size_t len=0, base_size=0;
+    delta_note = "增量信息不可用，可选择全量更新";
+    if (read_json(next.delta_index_url,body,len,now_ms()+30000)) {
+      uint8_t hash[32]; char hex[65];
+      mbedtls_sha256((const uint8_t*)body,len,hash,0); sha_hex(hash,hex);
+      if (!strcmp(hex,next.delta_index_sha) && base_identity(base_size,base_sha)) {
+        has_delta = ota_contract::parse_delta(body,len,next,esp_app_get_description()->version,
+                                             base_size,base_sha,candidate);
+        delta_note = has_delta ? "增量包可用" : "没有匹配当前固件的增量包";
+      }
+    }
+  }
+  Guard mutation(mutation_mutex);
+  if (strcmp(config().update_url,c.update_url)) {
+    ok=false; different=false; has_delta=false; failure="更新地址已改变，请重新检查";
+  }
   {
     Guard g(ota_mutex);
     release = ok ? next : Release{};
+    delta = has_delta ? candidate : ota_contract::Delta{};
   }
   {
     Guard g(state_mutex);
-    state.update_available = ok && strcmp(next.version, esp_app_get_description()->version);
+    state.update_available = different;
+    state.ota_full_size = ok ? next.size : 0;
+    state.ota_delta_size = has_delta ? candidate.size : 0;
+    state.ota_delta_available = has_delta;
+    ++state.ota_revision;
+    strlcpy(state.ota_sha,ok ? next.sha : "",sizeof(state.ota_sha));
+    strlcpy(state.ota_delta_note,delta_note,sizeof(state.ota_delta_note));
     strlcpy(state.ota_version, ok ? next.version : "", sizeof(state.ota_version));
   }
-  bool different = ok && strcmp(next.version, esp_app_get_description()->version);
-  status(!ok         ? OtaPhase::FAILED
-         : different ? OtaPhase::AVAILABLE
-                     : OtaPhase::CURRENT,
+  status(!ok ? OtaPhase::FAILED : different ? OtaPhase::AVAILABLE : OtaPhase::CURRENT,
          ok ? (different ? "发现可用版本，请确认安装" : "已是当前版本") : failure);
   checking = false;
   return;
@@ -515,6 +593,11 @@ void ota_check() {
       return;
     checking = true;
     state.update_available = false;
+    state.ota_delta_available = false;
+    state.ota_full_size=state.ota_delta_size=0;
+    state.ota_sha[0]=0;
+    strlcpy(state.ota_delta_note,"正在获取增量信息",sizeof(state.ota_delta_note));
+    ++state.ota_revision;
     state.ota_version[0] = 0;
   }
   status(OtaPhase::CHECKING, "正在检查更新", 0, true);
@@ -535,6 +618,25 @@ void ota_check() {
     status(OtaPhase::FAILED, "升级任务队列繁忙，请稍后重试");
   }
 }
+struct DeltaStream {
+  Writer &writer;
+  const esp_partition_t *base = esp_ota_get_running_partition();
+  size_t base_size;
+  int64_t deadline;
+  esp_err_t error = ESP_OK;
+  static esp_err_t read(uint8_t *buf, size_t n, int offset, void *ctx) {
+    auto &s=*static_cast<DeltaStream*>(ctx);
+    if (now_ms()>=s.deadline) return s.error=ESP_ERR_TIMEOUT;
+    if (offset<0 || (size_t)offset>s.base_size || n>s.base_size-(size_t)offset)
+      return s.error=ESP_ERR_INVALID_SIZE;
+    return s.error=esp_partition_read(s.base,offset,buf,n);
+  }
+  static esp_err_t write(const uint8_t *buf, size_t n, void *ctx) {
+    auto &s=*static_cast<DeltaStream*>(ctx);
+    if (now_ms()>=s.deadline) return s.error=ESP_ERR_TIMEOUT;
+    return s.error=s.writer.feed(buf,n);
+  }
+};
 static void install_task(void *) {
   const int64_t deadline = now_ms() + 600000;
   Release r;
@@ -542,12 +644,32 @@ static void install_task(void *) {
     Guard l(ota_mutex);
     r = release;
   }
+  ota_contract::Delta patch;
+  { Guard l(ota_mutex); patch=delta; }
+  bool incremental = install_mode == OtaMode::DELTA;
+  if (incremental) {
+    char sha[65]; size_t size=0;
+    if (!base_identity(size,sha) || size!=patch.base_size || strcmp(sha,patch.base_sha)) {
+      fail("当前固件与增量包不匹配，请重新检查或选择全量更新"); return;
+    }
+  }
+  size_t download_size=incremental ? patch.size : r.size;
   esp_err_t e = ESP_FAIL;
   const char *failure = "固件下载连接失败，请检查证书、时间和网络";
   {
-    Writer w(r.size, r.version);
+    Writer w(r.size, r.version, !incremental);
+    DeltaStream stream{w,esp_ota_get_running_partition(),patch.base_size,deadline};
+    esp_delta_ota_cfg_t cfg{};
+    cfg.user_data=&stream; cfg.read_cb_with_user_data=DeltaStream::read;
+    cfg.write_cb_with_user_data=DeltaStream::write;
+    auto decoder=incremental ? esp_delta_ota_init(&cfg) : nullptr;
+    if (incremental && !decoder) { fail("增量处理内存不足，可选择全量更新"); return; }
+    bool finalized=false;
+    mbedtls_sha256_context patch_hash;
+    mbedtls_sha256_init(&patch_hash); mbedtls_sha256_starts(&patch_hash,0);
+    if (incremental) status(OtaPhase::TRANSFERRING,"正在下载并重建增量固件",0,true,download_size);
     ResponseHeaders headers;
-    auto h = client(r.url, headers);
+    auto h = client(incremental ? patch.url : r.url, headers);
     if (h && esp_http_client_open(h, 0) == ESP_OK) {
       auto len = esp_http_client_fetch_headers(h);
       int code = esp_http_client_get_status_code(h);
@@ -556,36 +678,56 @@ static void install_task(void *) {
                 : (code >= 300 && code < 400) ? "固件地址发生重定向，已停止升级"
                 : code != 200                 ? "固件服务器响应失败，保留原固件"
                                               : "固件响应长度、类型或编码无效，保留原固件";
-      if (code == 200 && len == (int64_t)r.size && !esp_http_client_is_chunked_response(h) &&
+      if (code == 200 && len == (int64_t)download_size && !esp_http_client_is_chunked_response(h) &&
           response_type(headers, "application/octet-stream")) {
         char b[4096];
         size_t total = 0;
         e = ESP_OK;
-        while (total < r.size) {
+        while (total < download_size) {
           if (now_ms() >= deadline) {
             e = ESP_ERR_TIMEOUT;
             break;
           }
-          int n = esp_http_client_read(h, b, std::min(sizeof(b), r.size - total));
+          int n = esp_http_client_read(h, b, std::min(sizeof(b), download_size - total));
           if (n <= 0) {
             e = ESP_ERR_TIMEOUT;
             break;
           }
-          e = w.feed(b, n);
+          if (incremental) {
+            mbedtls_sha256_update(&patch_hash,(const uint8_t*)b,n);
+            e=esp_delta_ota_feed_patch(decoder,(const uint8_t*)b,n);
+            if (e!=ESP_OK && stream.error!=ESP_OK) e=stream.error;
+          } else e = w.feed(b, n);
           if (e != ESP_OK)
             break;
           total += n;
+          if (incremental) {
+            { Guard g(state_mutex); state.ota_received=total;
+              state.ota_progress=total*100/download_size; }
+            static int64_t last=0;
+            if (now_ms()-last>=100) { publish(OTA); last=now_ms(); }
+          }
         }
         if (e == ESP_OK && !esp_http_client_is_complete_data_received(h))
           e = ESP_ERR_INVALID_SIZE;
-        if (e == ESP_OK)
-          e = w.finish(r.sha);
+        if (e == ESP_OK && incremental) {
+          uint8_t hash[32]; char hex[65];
+          mbedtls_sha256_finish(&patch_hash,hash); sha_hex(hash,hex);
+          if (strcmp(hex,patch.sha)) e=ESP_ERR_INVALID_CRC;
+          else { e=esp_delta_ota_finalize(decoder); finalized=true; }
+        }
+        if (e == ESP_OK) e = w.finish(r.sha);
         if (e != ESP_OK)
           failure = write_error(e);
       }
     }
-    if (h)
-      esp_http_client_cleanup(h);
+    if (h) esp_http_client_cleanup(h);
+    if (decoder) {
+      // finalize also releases the compression state on cancellation/error.
+      if (!finalized) esp_delta_ota_finalize(decoder);
+      esp_delta_ota_deinit(decoder);
+    }
+    mbedtls_sha256_free(&patch_hash);
   }
   if (e == ESP_OK) {
     status(OtaPhase::REBOOTING, "校验成功，即将重启", 100);
@@ -596,28 +738,42 @@ static void install_task(void *) {
   fail(failure);
   return;
 }
-void ota_install() {
-  bool available;
+void ota_install(OtaMode mode, const char *sha) {
+  // The UI confirms an exact target, not whichever manifest happens to arrive next.
   {
-    Guard g(state_mutex);
-    available = state.update_available;
+    Guard l(ota_mutex);
+    if (checking || !release.size || !sha || strcmp(sha,release.sha) ||
+        (mode != OtaMode::FULL && mode != OtaMode::DELTA) ||
+        (mode == OtaMode::DELTA && !delta.size)) {
+      notice("升级信息已改变，请重新检查并确认"); return;
+    }
   }
-  if (checking || !available || !acquire()) {
-    notice("无法升级：请检查版本、供电或当前状态");
-    return;
-  }
-  status(OtaPhase::TRANSFERRING, "正在连接固件服务器", 0, true);
-  int job = 2;
-  if (xQueueSend(jobs, &job, 0) != pdTRUE)
-    fail("无法创建升级任务");
+  bool available;
+  { Guard g(state_mutex); available=state.update_available; }
+  if (!available || !acquire()) { notice("无法升级：请检查版本、供电或当前状态"); return; }
+  install_mode=mode;
+  { Guard g(state_mutex); state.ota_mode=mode; }
+  status(OtaPhase::TRANSFERRING,"正在连接固件服务器",0,true);
+  int job=2;
+  if (xQueueSend(jobs,&job,0)!=pdTRUE) fail("无法创建升级任务");
+}
+void ota_invalidate() {
+  Guard l(ota_mutex);
+  if(checking) recheck_requested=true;
+  release=Release{}; delta=ota_contract::Delta{};
+  Guard g(state_mutex);
+  state.update_available=false; state.ota_delta_available=false;
+  state.ota_full_size=state.ota_delta_size=0;
+  state.ota_sha[0]=0; state.ota_version[0]=0; ++state.ota_revision;
 }
 static void worker(void *) {
   int job;
   for (;;)
     if (xQueueReceive(jobs, &job, portMAX_DELAY)) {
-      if (job == 1)
+      if (job == 1) {
         check_task(nullptr);
-      else
+        if(recheck_requested.exchange(false)) ota_check();
+      } else
         install_task(nullptr);
     }
 }

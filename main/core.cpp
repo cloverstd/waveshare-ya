@@ -360,7 +360,9 @@ esp_err_t set_update_url(const char *s) {
     return ESP_ERR_INVALID_ARG;
   auto c = config();
   strlcpy(c.update_url, s, sizeof(c.update_url));
-  return save_config(c);
+  auto result=save_config(c);
+  if(result==ESP_OK) ota_invalidate();
+  return result;
 }
 void diag_set(const char *k, const char *v) {
   nvs_handle_t h;
@@ -511,7 +513,7 @@ static void worker(void *) {
           ota_check();
           break;
         case Op::OTA_INSTALL:
-          ota_install();
+          ota_install(static_cast<OtaMode>(c.arg), c.b);
           break;
         case Op::REBOOT: {
           Guard mutation(mutation_mutex);

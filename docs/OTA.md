@@ -43,3 +43,26 @@
 在线托管的清单与固件均需 HTTP 200、精确 `Content-Length`；清单 `Content-Type` 为 `application/json`（可附 `charset=utf-8`），固件为 `application/octet-stream`。禁止分块传输、代理压缩或转码；不跟随 HTTP 重定向。发布工具默认输出正式域名下的版本化二进制地址，本地发布产物不会自动上传服务器；正式 Tag 由 GitHub Actions 构建并发布 Release，Workers 自动发现最新正式版本，见 RELEASE.md。
 
 局域网 `GET /api/status` 保留 `version/result/progress/pending`，新增 `phase/received/total`；`phase` 是稳定英文状态，`received/total` 单位为字节。该接口与 `POST /api/ota` 都由设备提供，不属于公网更新服务器需要实现的接口。相关鉴权仍是十分钟会话的 Bearer token。
+
+## 0.6.0 增量更新
+
+进入设备“固件升级”页面自动提交一次后台检查，保留“重新检查”。离线显示原因，不循环请求；已有检查合并，升级/启动验证中恢复显示进度。正式版本按数字语义版本比较，只对较新版本开放在线安装；局域网页上传仍接受完整签名应用 `.bin`。
+
+页面提供全量、增量选项及各自下载大小；匹配且更小的补丁默认选中。增量不可用时显示原因并禁用该选项，用户仍可全量安装。确认框绑定目标SHA和方式，更新源变化使旧检查失效。增量失败保留错误与原固件，由用户重试或改选全量，不自动下载全量。
+
+增量使用esp_delta_ota 1.1.4与detools sequential/heatshrink原始补丁流（不是示例工具附加64字节头部的格式）。从当前槽读取旧签名镜像，流式重建到备用槽；旧镜像完整SHA256/长度、补丁SHA256、目标完整SHA256/长度与签名依次核对，完整镜像包含原始签名尾部。不要用app_elf_sha256或esp_partition_get_sha256替代完整文件摘要。无额外补丁分区、无需TF卡。基线哈希在后台计算；Flash任务保持内部RAM栈和有界读写，失败释放解码器及连接。
+
+进度条按所选下载包大小计算，`written`另记重建后的应用字节；下载100%后还要完成解码、签名校验和30秒启动验证。沿用ab6-v1、配置槽复制与回退机制。旧固件首次获得该能力需先通过全量OTA安装0.6.0或以后版本。
+
+本地生成（先通过release.py或export_artifacts.py准备全量发布目录）：
+
+```sh
+.tools/venv/bin/python tools/delta_release.py artifacts/release/0.6.0 \
+  --base artifacts/release/0.5.1/waveshare-ya-0.5.1.bin
+# CI从公开Release下载最近三个较低正式版本的原始镜像：
+.tools/venv/bin/python tools/delta_release.py artifacts/publish --github-bases
+```
+
+生成器固定detools 0.53.0 / heatshrink2 0.15.0，验证基线及目标的既有生产签名，生成后逐字节还原目标，再将索引指针加入全量清单。只有更小的补丁进入索引。没有历史版本时允许空索引；历史镜像验证或还原错误导致发布失败。线上清单和补丁均由Tag CI生成，不可用本地重新编译镜像替代同版本CI基线。
+
+物理USB诊断增加`install`可选字段`mode`（`full`默认或`delta`）及`sha256`（目标完整摘要；省略则绑定提交时已检查的目标）。`status`包含`ota_phase/ota_mode/ota_received/ota_total/ota_written/full_size/delta_size/delta_available/target_sha256`，可用于实机验收。

@@ -77,6 +77,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           .tools/venv/bin/python tools/export_artifacts.py --build build-release --out artifacts/publish --notes 'Workers 在线更新、GitHub 自动构建发布与源码脱敏'
+          GH_TOKEN="${{ github.token }}" .tools/venv/bin/python tools/delta_release.py artifacts/publish --github-bases
           .tools/venv/bin/python tools/verify_release.py artifacts/publish --tag "$GITHUB_REF_NAME" --provenance
           .tools/venv/bin/python tools/check_public.py --tracked --artifacts artifacts/publish
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
