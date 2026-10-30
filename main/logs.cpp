@@ -1,4 +1,6 @@
 #include "logs.hpp"
+#include "log_assembler.hpp"
+#include "esp_random.h"
 #include "ya.hpp"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -14,6 +16,8 @@ static_assert(CONFIG_LOG_DYNAMIC_LEVEL_CONTROL, "Log app requires runtime level 
 namespace ya {
 namespace {
 LogBuffer *buffer = nullptr;
+LogAssembler assembler;
+uint32_t boot_id = 0;
 SemaphoreHandle_t buffer_mutex = nullptr, level_mutex = nullptr;
 std::atomic<int> threshold{LOG_DEFAULT_LEVEL};
 std::atomic<uint32_t> dropped{0};
@@ -25,11 +29,11 @@ int capture(const char *format, va_list args) {
   va_copy(copy, args);
   int n = vsnprintf(text, sizeof(text), format, copy);
   va_end(copy);
-  int level = log_line_level(text);
-  if (n > 0 && log_accepts(threshold.load(), level)) {
+  if (n > 0) {
     log_clean(text, sizeof(text), n);
     if (xSemaphoreTake(buffer_mutex, 0) == pdTRUE) {
-      buffer->append(level, text);
+      assembler.feed(reinterpret_cast<uintptr_t>(xTaskGetCurrentTaskHandle()), text,
+                     now_ms(), threshold.load(), *buffer);
       xSemaphoreGive(buffer_mutex);
     } else ++dropped;
   }
@@ -40,7 +44,9 @@ void apply(int level) {
   esp_log_level_set("*", static_cast<esp_log_level_t>(level));
 }
 } // namespace
+uint32_t logs_boot_id() { return boot_id; }
 void logs_init() {
+  boot_id = esp_random() & 0x7fffffff;
   buffer_mutex = xSemaphoreCreateMutex();
   level_mutex = xSemaphoreCreateMutex();
   auto *memory = heap_caps_malloc(sizeof(LogBuffer), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -68,6 +74,7 @@ esp_err_t logs_setting(int level) {
 }
 bool logs_snapshot(LogBuffer &out, uint32_t &lost) {
   if (!buffer || xSemaphoreTake(buffer_mutex, 0) != pdTRUE) return false;
+  assembler.expire(now_ms(), *buffer);
   out = *buffer;
   lost = dropped.load();
   xSemaphoreGive(buffer_mutex);
@@ -75,7 +82,7 @@ bool logs_snapshot(LogBuffer &out, uint32_t &lost) {
 }
 bool logs_clear() {
   if (!buffer || xSemaphoreTake(buffer_mutex, 0) != pdTRUE) return false;
-  buffer->clear(); dropped = 0;
+  assembler.clear(); buffer->clear(); dropped = 0;
   xSemaphoreGive(buffer_mutex);
   return true;
 }

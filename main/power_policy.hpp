@@ -23,6 +23,9 @@ inline bool keep_radios_awake(bool screen_sleeping, unsigned mode, bool protecte
                               bool physical_wake) {
   return !screen_sleeping || mode == 0 || protected_work || physical_wake;
 }
+inline bool screen_only_window(int64_t elapsed_ms, unsigned delay_minutes, bool silent) {
+  return !silent && elapsed_ms < int64_t(delay_minutes) * 60000;
+}
 inline bool deep_due(unsigned mode, int64_t idle_ms, unsigned light_minutes, bool silent,
                      bool syncing) {
   return !syncing &&

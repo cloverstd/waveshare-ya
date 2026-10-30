@@ -193,6 +193,7 @@ static void task(void *) {
             auto *items = cJSON_AddArrayToObject(out, "items");
             for (unsigned i = 0; i < v->count; ++i) {
               auto *entry = cJSON_CreateObject();
+              cJSON_AddNumberToObject(entry, "sequence", v->at(i).sequence);
               cJSON_AddNumberToObject(entry, "level", v->at(i).level);
               cJSON_AddStringToObject(entry, "text", v->at(i).text);
               cJSON_AddItemToArray(items, entry);
@@ -288,6 +289,8 @@ static void task(void *) {
         cJSON_AddNumberToObject(out, "psram_total", s.psram_total);
         cJSON_AddNumberToObject(out, "internal_min", s.internal_min);
         cJSON_AddBoolToObject(out, "flash_mounted", s.flash_mounted);
+        cJSON_AddStringToObject(out, "flash_note", s.flash_note);
+        cJSON_AddStringToObject(out, "flash_error", esp_err_to_name(s.flash_error));
         cJSON_AddBoolToObject(out, "flash_capacity_valid", s.flash_capacity_valid);
         cJSON_AddBoolToObject(out, "sd_capacity_valid", s.sd_capacity_valid);
         cJSON_AddNumberToObject(out, "flash_total", s.flash_total);
@@ -386,7 +389,7 @@ static void task(void *) {
           cJSON_AddStringToObject(out, "error", "use_sleep_battery_or_sleep_usb");
       } else if (!strcmp(name, "page")) {
         auto *p = cJSON_GetObjectItem(j, "id");
-        if (cJSON_IsNumber(p) && p->valueint >= 0 && p->valueint <= 14 && p->valueint != 11) {
+        if (cJSON_IsNumber(p) && p->valueint >= 0 && p->valueint <= 15 && p->valueint != 11) {
           requested_page = p->valueint;
           ok = true;
         }

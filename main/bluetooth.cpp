@@ -98,6 +98,7 @@ static void rpc(uint16_t conn, const char *text) {
       if (!strcmp(op->valuestring, "status")) {
         auto s = snapshot();
         auto c = config();
+        cJSON_AddStringToObject(result, "data_identity", data_identity().c_str());
         cJSON_AddStringToObject(result, "version", esp_app_get_description()->version);
         cJSON_AddStringToObject(result, "ip", s.ip);
         cJSON_AddNumberToObject(result, "brightness", c.brightness);

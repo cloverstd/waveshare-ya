@@ -1,4 +1,5 @@
 #include "notifications.hpp"
+#include "companion.hpp"
 #include "power.hpp"
 #include "power_policy.hpp"
 #include "wake_handoff.hpp"
@@ -17,6 +18,7 @@ namespace ya {
 std::atomic<bool> screen_sleeping{false}, power_paused{false}, power_wake_ui{false};
 namespace {
 PowerPrefs prefs;
+struct SleepDelay { uint16_t battery = 10, usb = 10; } delays;
 SemaphoreHandle_t mutex;
 esp_pm_lock_handle_t awake_lock = nullptr;
 std::atomic<int64_t> notify_until{0}, last_notify{-60000}, hold_until{0};
@@ -72,7 +74,7 @@ bool suspend() {
 void deep() {
   if (wake_handoff.pending())
     return;
-  if (data_busy() || !data_checkpoint() || !notifications_checkpoint())
+  if (companion_busy() || data_busy() || !data_checkpoint() || !notifications_checkpoint())
     return;
   bool pending;
   {
@@ -140,6 +142,11 @@ void power_init() {
     if (valid(loaded.battery) && valid(loaded.usb))
       prefs = loaded;
   }
+  size_t delay_size = sizeof delays;
+  SleepDelay loaded_delay;
+  if (app_config_get("sys_delay", 1, &loaded_delay, &delay_size) == ESP_OK &&
+      delay_size == sizeof loaded_delay && loaded_delay.battery <= 1440 && loaded_delay.usb <= 1440)
+    delays = loaded_delay;
   if (retained.magic == 0x59415033 && retained.check == checksum(retained.due) && retained.due) {
     auto rtc = esp_rtc_get_time_us();
     sync_at = power_policy::restore_deadline(now_ms(), retained.due, rtc);
@@ -182,6 +189,7 @@ PowerProfile power_profile() {
 int power_value(const char *k) {
   Guard g(mutex);
   auto p = strstr(k, "usb") ? prefs.usb : prefs.battery;
+  if (strstr(k, "delay")) return strstr(k, "usb") ? delays.usb : delays.battery;
   if (strstr(k, "mode"))
     return p.mode;
   if (strstr(k, "light"))
@@ -195,6 +203,15 @@ int power_value(const char *k) {
 esp_err_t power_setting(const char *k, int value) {
   if (ota_busy)
     return ESP_ERR_INVALID_STATE;
+  if (!strcmp(k, "power_battery_delay") || !strcmp(k, "power_usb_delay")) {
+    if (value < 0 || value > 1440) return ESP_ERR_INVALID_ARG;
+    SleepDelay next;
+    { Guard g(mutex); next = delays; }
+    (strstr(k, "usb") ? next.usb : next.battery) = value;
+    auto e = app_config_set("sys_delay", 1, &next, sizeof next);
+    if (e == ESP_OK) { Guard g(mutex); delays = next; }
+    return e;
+  }
   PowerPrefs next;
   {
     Guard g(mutex);
@@ -232,7 +249,7 @@ esp_err_t power_setting(const char *k, int value) {
   return e;
 }
 std::string power_diagnostics() {
-  return std::string(paused ? "light" : "active") + (syncing ? " syncing" : "") +
+  return std::string(paused ? "light" : screen_sleeping ? "screen-off" : "active") + (syncing ? " syncing" : "") +
          " wake=" + std::to_string(esp_sleep_get_wakeup_cause());
 }
 void power_notify() {
@@ -284,8 +301,12 @@ void power_tick() {
     }
     return;
   }
-  if (now < hold_until)
+  const bool usb = [] { Guard g(state_mutex); return state.battery.valid && state.battery.usb; }();
+  const int64_t delay_ms = silent ? 0 : int64_t(power_value(usb ? "power_usb_delay" : "power_battery_delay")) * 60000;
+  if (now < hold_until || companion_busy() || power_policy::screen_only_window(now - off_at, delay_ms / 60000, silent)) {
+    wifi_runtime(true); ble_runtime(true);
     return;
+  }
   if (!suspend())
     return;
   bool due = data_has_plans() && p.sync_minutes && now >= sync_at;
@@ -308,7 +329,7 @@ void power_tick() {
     wifi_runtime(false);
     ble_runtime(p.ble_receive);
   }
-  if (power_policy::deep_due(p.mode, now - off_at, p.light_minutes, silent, syncing))
+  if (power_policy::deep_due(p.mode, now - off_at - delay_ms, p.light_minutes, silent, syncing))
     deep();
 }
 } // namespace ya

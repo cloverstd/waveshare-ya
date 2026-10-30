@@ -74,6 +74,8 @@ struct Status {
   int wifi_rssi = 0;
   bool sd_capacity_valid = false, flash_capacity_valid = false;
   bool time_valid = false, time_syncing = false, rtc_valid = false, flash_mounted = false;
+  char flash_note[96]{"检查中"};
+  esp_err_t flash_error = ESP_OK;
   int64_t last_time_sync = 0;
   uint32_t ram_free = 0, ram_total = 0, psram_free = 0, psram_total = 0;
   uint32_t internal_min = 0, internal_largest = 0;
@@ -160,7 +162,7 @@ enum class Op {
   BLE_FORGET,
   BLE_PAIR,
   AUDIO_TEST,
-  SD_MOUNT,
+  FLASH_RETRY, SD_MOUNT,
   SD_UNMOUNT,
   OTA_SESSION,
   OTA_CHECK,
@@ -192,8 +194,10 @@ bool board_key();
 // Consume events sampled independently of LVGL: back=1, home=2, toggle=4, shutdown=8.
 uint32_t board_key_events();
 void board_shutdown();
+void storage_retry();
 void storage_mount();
 void storage_unmount();
+// When both are needed, acquire mutation_mutex before storage_mutex.
 // Storage clients hold the lease across every file operation; unmount waits for
 // leases.
 extern SemaphoreHandle_t storage_mutex;

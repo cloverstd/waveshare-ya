@@ -515,6 +515,9 @@ static void worker(void *) {
         case Op::AUDIO_TEST:
           board_audio_test();
           break;
+        case Op::FLASH_RETRY:
+          storage_retry();
+          break;
         case Op::SD_MOUNT:
           storage_mount();
           break;

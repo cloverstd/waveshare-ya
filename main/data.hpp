@@ -7,6 +7,7 @@ struct DataView {
   bool fresh = false;
 };
 void data_init();
+std::string data_identity();
 // Nonblocking application API. JSON is a logical request, never a transport handle.
 bool data_request(const char *resource, const char *params = "{}", const char *op = "get",
                   const char *payload = "{}", const char *idempotency_key = "");

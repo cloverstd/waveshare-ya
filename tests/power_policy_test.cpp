@@ -21,6 +21,12 @@ int main() {
   assert(!deep_due(1, 99999999, 10, false, false));
   assert(!deep_due(0, 99999999, 10, false, false));
   assert(deep_due(3, 0, 10, true, false));
+  assert(screen_only_window(599999, 10, false));
+  assert(!screen_only_window(600000, 10, false));
+  assert(!screen_only_window(0, 10, true));
+  assert(!screen_only_window(0, 0, false));
+  assert(!deep_due(3, 600000 - 600000, 10, false, false));
+  assert(deep_due(3, 1200000 - 600000, 10, false, false));
   assert(restore_deadline(100, 10000000, 4000000) == 6100);
   assert(restore_deadline(100, 4000000, 10000000) == 100);
 }

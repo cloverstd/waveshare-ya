@@ -6,6 +6,8 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("source,symbol,budget", [
+    ("companion.cpp", "cJSON* ya::companion_request(int, const cJSON*)", 2048),
+    ("data.cpp", "void ya::{anonymous}::worker(void*)", 1024),
     ("main.cpp", "void app_main()", 512),
     ("board.cpp", "void ya::key_task(void*)", 512),
     ("ota.cpp", "void ya::ota_boot_check()", 1024),

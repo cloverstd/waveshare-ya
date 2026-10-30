@@ -1,5 +1,6 @@
 #include "notifications.hpp"
 #include "logs.hpp"
+#include "companion.hpp"
 #include "esp_err.h"
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -333,8 +334,8 @@ static void clean() {
   lv_obj_clean(content);
   lv_obj_scroll_to_y(content, 0, LV_ANIM_OFF);
   lv_obj_remove_flag(headline, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_pos(content, 24, 114);
-  lv_obj_set_size(content, 432, 342);
+  lv_obj_set_pos(content, 24, 72);
+  lv_obj_set_size(content, 432, 384);
 }
 void app_close() {
   if (active) {
@@ -399,11 +400,15 @@ void ui_home() {
   notice_badge_refresh();
 }
 void ui_settings(lv_obj_t *p) {
-  const char *titles[] = {"Wi-Fi 网络", "蓝牙连接", "显示与息屏", "声音",
-                          "TF 卡存储",  "固件升级", "系统状态",   "屏幕校准"};
-  for (int i = 0; i < 8; i++)
-    button(p, titles[i], go, (void *)(intptr_t)(i + 3));
-  button(p, "时间同步", go, (void *)(intptr_t)12);
+  label(p, "网络与连接");
+  button(p, "Wi-Fi 网络", go, (void *)3); button(p, "蓝牙连接", go, (void *)4);
+  label(p, "显示与声音");
+  button(p, "显示", go, (void *)5); button(p, "声音", go, (void *)6);
+  button(p, "屏幕校准", go, (void *)10);
+  label(p, "电源与休眠"); button(p, "息屏与休眠", go, (void *)15);
+  label(p, "存储"); button(p, "内置与 TF 卡", go, (void *)7);
+  label(p, "系统"); button(p, "时间同步", go, (void *)12);
+  button(p, "固件升级", go, (void *)8); button(p, "系统状态", go, (void *)9);
 }
 static lv_obj_t *card(lv_obj_t *p, uint32_t color, int height = LV_SIZE_CONTENT) {
   auto *v = lv_obj_create(p); plain(v);
@@ -564,7 +569,7 @@ static void system_refresh(const Status &s) {
   bool available[] = {s.ram_total>0,s.psram_total>0,s.flash_mounted && s.flash_capacity_valid,s.sd_mounted && s.sd_capacity_valid};
   for (int i=0;i<4;++i) {
     if (available[i] && total[i]) snprintf(b,sizeof(b),"%.2f / %.2f MB 可用",free[i]/1048576.0,total[i]/1048576.0);
-    else strlcpy(b,i==2 && !s.flash_mounted ? "未初始化 / 未挂载" : i==3 && !s.sd_mounted ? "未挂载" : "容量未知",sizeof(b));
+    else strlcpy(b,i==2 && !s.flash_mounted ? s.flash_note : i==3 && !s.sd_mounted ? "未挂载" : "容量未知",sizeof(b));
     set_text(sys_values[4+i],b); lv_bar_set_value(sys_bars[i],available[i] && total[i] ? 100-std::min(uint64_t(100),free[i]*100/total[i]) : 0,LV_ANIM_OFF);
   }
 }
@@ -720,7 +725,7 @@ void ui_logs(lv_obj_t *parent) {
   log_revision = log_dropped = ~0u;
   log_refresh_at = 0;
   auto *view = lv_obj_create(parent); plain(view); column(view);
-  lv_obj_set_size(view, LV_PCT(100), 342);
+  lv_obj_set_size(view, LV_PCT(100), 384);
   lv_obj_set_style_pad_row(view, 8, 0);
   lv_obj_remove_flag(view, LV_OBJ_FLAG_SCROLLABLE);
   auto *row = lv_obj_create(view); plain(row);
@@ -753,6 +758,11 @@ void ui_logs(lv_obj_t *parent) {
   lv_obj_set_size(clear, 44, 44);
   lv_obj_set_style_pad_all(clear, 0, 0);
   lv_obj_set_style_text_font(clear, &lv_font_montserrat_20, 0);
+  auto *send = button(row, LV_SYMBOL_UPLOAD, [](lv_event_t *) {
+    notice(companion_send_logs() ? "日志已排队发送" : "操作队列已满，请重试");
+  });
+  lv_obj_set_size(send, 44, 44); lv_obj_set_style_pad_all(send, 0, 0);
+  lv_obj_set_style_text_font(send, &lv_font_montserrat_20, 0);
   log_list = card(view, 0x151e2b, 0); column(log_list);
   lv_obj_set_flex_grow(log_list, 1);
   lv_obj_set_style_pad_all(log_list, 10, 0);
@@ -1257,7 +1267,7 @@ static void show(int id) {
     const char *app_id = id == 13 ? "notifications" : "logs";
     for (size_t i=0;i<app_count;++i) if (!strcmp(apps[i].id,app_id)) { app_open(i); return; }
   }
-  if (id < 3 || id > 12 || id == 11)
+  if (id < 3 || id > 15 || id == 11)
     return;
   app_close();
   clean();
@@ -1318,13 +1328,16 @@ static void show(int id) {
     break;
   }
   case 5:
-    lv_label_set_text(headline, "显示与息屏");
+    lv_label_set_text(headline, "显示");
     slider(content, "显示亮度", "brightness", c.brightness, 5);
     select(content, "界面目标帧率", "15 FPS\n30 FPS\n60 FPS",
            c.fps == 15   ? 0
            : c.fps == 30 ? 1
                          : 2,
            "fps");
+    break;
+  case 15:
+    lv_label_set_text(headline, "电源与休眠");
     select(content, "电池供电息屏时间", "30 秒\n1 分钟\n5 分钟",
            selected_index("sleep_battery", prefs.sleep_battery), "sleep_battery");
     select(content, "USB 供电息屏时间", "1 分钟\n5 分钟\n10 分钟\n常亮",
@@ -1333,6 +1346,12 @@ static void show(int id) {
            power_value("power_battery_mode"), "power_battery_mode");
     select(content, "USB 休眠策略", "仅息屏\n轻睡\n深睡\n轻睡转深睡", power_value("power_usb_mode"),
            "power_usb_mode");
+    select(content, "电池息屏后延时休眠", "立即\n1 分钟\n5 分钟\n10 分钟\n15 分钟\n30 分钟\n60 分钟",
+           selected_index("power_battery_delay", power_value("power_battery_delay")), "power_battery_delay");
+    select(content, "USB 息屏后延时休眠", "立即\n1 分钟\n5 分钟\n10 分钟\n15 分钟\n30 分钟\n60 分钟",
+           selected_index("power_usb_delay", power_value("power_usb_delay")), "power_usb_delay");
+    select(content, "USB 轻睡分钟", "关闭\n1\n5\n10\n15\n30\n60",
+           selected_index("power_usb_light", power_value("power_usb_light")), "power_usb_light");
     select(content, "电池轻睡分钟", "关闭\n1\n5\n10\n15\n30\n60",
            selected_index("power_battery_light", power_value("power_battery_light")),
            "power_battery_light");
@@ -1348,7 +1367,8 @@ static void show(int id) {
     opbutton(content, "播放测试提示音", Op::AUDIO_TEST);
     break;
   case 7:
-    lv_label_set_text(headline, "TF 卡存储");
+    lv_label_set_text(headline, "存储");
+    opbutton(content, "重试内置存储", Op::FLASH_RETRY);
     detail = label(content, "");
     opbutton(content, "挂载 / 重试", Op::SD_MOUNT);
     opbutton(content, "安全卸载", Op::SD_UNMOUNT);
@@ -1544,7 +1564,8 @@ static void update_notification(const Status &s) {
     seen_notice_expires = s.notice_expires;
     set_text(notification, s.notice);
   }
-  if (now_ms() >= s.notice_expires) set_text(notification, "");
+  if (now_ms() >= s.notice_expires || !s.notice[0]) lv_obj_add_flag(notification, LV_OBJ_FLAG_HIDDEN);
+  else { lv_obj_remove_flag(notification, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(notification); }
   notice_badge_refresh();
 }
 static void update_header(const Status &s, const Config &c) {
@@ -1705,13 +1726,9 @@ static void refresh(lv_timer_t *) {
                s.phone_connected ? "已连接" : "未连接", (unsigned long)s.pair_code);
       break;
     case 7:
-      if (!s.sd_mounted)
-        strlcpy(b, "未挂载 TF 卡", sizeof(b));
-      else if (!s.sd_capacity_valid)
-        strlcpy(b, "TF 卡已挂载\n容量读取失败", sizeof(b));
-      else
-        snprintf(b, sizeof(b), "TF 卡已挂载\n总容量 %.2f GB / 可用 %.2f GB", s.sd_total / 1e9,
-                 s.sd_free / 1e9);
+      snprintf(b, sizeof b, "内置存储：%s\n%s\nTF 卡：%s", s.flash_note,
+               s.flash_mounted ? "容量见系统状态" : esp_err_to_name(s.flash_error),
+               s.sd_mounted ? "已挂载" : "未挂载");
       break;
     case 12: {
       char current[40] = "等待校时", last_sync[40] = "尚未同步";
@@ -1862,9 +1879,13 @@ void ui_start() {
   clock_label = label(root, "--:--", 68);
   lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_20, 0);
   lv_obj_set_pos(clock_label, 28, 30);
-  notification = label(root, "", 190);
-  lv_obj_set_pos(notification, 104, 28);
-  lv_obj_set_height(notification, 30);
+  notification = label(root, "", 400);
+  lv_obj_set_pos(notification, 40, 398);
+  lv_obj_set_height(notification, 48);
+  lv_obj_set_style_bg_color(notification, lv_color_hex(0x1c2632), 0);
+  lv_obj_set_style_bg_opa(notification, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(notification, 12, 0);
+  lv_obj_set_style_pad_all(notification, 10, 0);
   lv_label_set_long_mode(notification, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lv_obj_set_style_text_align(notification, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(notification, accent(), 0);
@@ -1923,14 +1944,15 @@ void ui_start() {
   battery_number = label(battery_icon, "--", LV_SIZE_CONTENT);
   lv_obj_set_style_text_font(battery_number, &lv_font_montserrat_20, 0);
   lv_obj_center(battery_number);
-  headline = label(root, "YA", 432);
-  lv_obj_set_pos(headline, 24, 72);
+  headline = label(root, "", 128);
+  lv_obj_set_pos(headline, 176, 28);
+  lv_label_set_long_mode(headline, LV_LABEL_LONG_DOT);
   lv_obj_set_height(headline, 30);
   lv_obj_set_style_text_align(headline, LV_TEXT_ALIGN_CENTER, 0);
   content = lv_obj_create(root);
   plain(content);
-  lv_obj_set_pos(content, 24, 114);
-  lv_obj_set_size(content, 432, 342);
+  lv_obj_set_pos(content, 24, 72);
+  lv_obj_set_size(content, 432, 384);
   lv_obj_set_style_bg_color(content, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
   column(content);

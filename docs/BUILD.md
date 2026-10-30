@@ -40,7 +40,7 @@ python -m esptool --chip esp32s3 --port PORT write_flash 0 private/backups/origi
 
 页面 ID：0 桌面、1 设置、2 系统状态、3 Wi-Fi、4 BLE、5 显示、6 声音、7 存储、8 OTA、9 系统、10 四角校准、12 日期与时间；9 为系统状态兼容入口。`{"op":"page","id":2}` 用于切换验收页面。`--snapshot artifacts/battery.png` 导出渲染图；截图不能证明实体屏幕的触摸或物理遮挡情况。
 
-新增日志应用诊断页面ID14，默认Warning，使用及构建缓存迁移见[LOGS.md](LOGS.md)。
+新增电源设置诊断页面ID15、日志应用诊断页面ID14，默认Warning，使用及构建缓存迁移见[LOGS.md](LOGS.md)。
 
 电池统计开发分支在页面2显示耗电统计与充放电剩余时间，USB/BLE `status`包含`battery_stats`；算法、采样和重启/深睡重置边界见[BATTERY_STATS.md](BATTERY_STATS.md)。
 

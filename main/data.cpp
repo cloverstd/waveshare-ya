@@ -1,8 +1,12 @@
 #include "data.hpp"
+#include "companion.hpp"
+#include "logs.hpp"
+#include <memory>
 #include "power.hpp"
 #include "data_protocol.hpp"
 #include "cJSON.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "host/ble_hs.h"
@@ -132,12 +136,18 @@ struct Peer {
   std::deque<Tx> tx;
   std::deque<std::string> seen;
   std::map<std::string, int> sequences;
-  bool subscribed = false, ready = false, announced_active = false;
+  bool subscribed = false, ready = false, announced_active = false, companion = false;
   unsigned max_bytes = 4096;
   int64_t connected = 0, rx_at = 0, sample_at = 0;
   std::vector<int> samples;
   int rssi = -127, groups = 0;
   std::string probe;
+  std::map<std::string, std::string> replies;
+  std::shared_ptr<LogBuffer> log_batch;
+  uint32_t log_cursor = 0, log_lost = 0;
+  bool log_live = false;
+  std::string log_finish;
+  int64_t log_at = 0, log_deadline = 0;
 };
 Peer peers[2];
 int active = -1;
@@ -252,6 +262,77 @@ bool matching(cJSON *j, const Work &w) {
   auto *p = cJSON_GetObjectItem(j, "params");
   return str(j, "resource") == w.resource && number(j, "schema") == 1 && canonical(p) == w.params;
 }
+std::shared_ptr<LogBuffer> log_snapshot(uint32_t &lost) {
+  auto *memory = heap_caps_malloc(sizeof(LogBuffer), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!memory) return {};
+  auto view = std::shared_ptr<LogBuffer>(new (memory) LogBuffer{}, [](LogBuffer *p) { p->~LogBuffer(); heap_caps_free(p); });
+  return logs_snapshot(*view, lost) ? view : nullptr;
+}
+void log_page(cJSON *j, const LogBuffer &v, uint32_t lost, uint32_t &cursor, unsigned max_bytes) {
+  cJSON_AddNumberToObject(j, "boot", logs_boot_id());
+  cJSON_AddNumberToObject(j, "overwritten", v.overwritten);
+  cJSON_AddNumberToObject(j, "dropped", lost);
+  cJSON_AddNumberToObject(j, "missed", v.count && cursor && v.at(0).sequence > cursor + 1 ? v.at(0).sequence - cursor - 1 : 0);
+  auto *a = cJSON_AddArrayToObject(j, "entries");
+  unsigned remaining = 0;
+  for (unsigned i = 0; i < v.count; ++i) {
+    auto &e = v.at(i); if (e.sequence <= cursor) continue;
+    auto *item = cJSON_CreateObject();
+    cJSON_AddNumberToObject(item, "sequence", e.sequence); cJSON_AddNumberToObject(item, "level", e.level);
+    cJSON_AddStringToObject(item, "text", e.text); cJSON_AddItemToArray(a, item);
+    if (dump(j).size() + 512 > max_bytes || cJSON_GetArraySize(a) > 4) {
+      cJSON_DeleteItemFromArray(a, cJSON_GetArraySize(a) - 1); remaining = 1; break;
+    }
+    cursor = e.sequence;
+  }
+  cJSON_AddNumberToObject(j, "next", cursor); cJSON_AddBoolToObject(j, "more", remaining);
+}
+void local_request(Peer &p, cJSON *j) {
+  auto resource = str(j, "resource"), id = str(j, "id"), op = str(j, "op");
+  cJSON *body = nullptr;
+  if (resource == "info.text") body = companion_request(p.conn, j);
+  else {
+    body = cJSON_CreateObject(); cJSON_AddStringToObject(body, "status", "succeeded");
+    if (op == "unsubscribe") { p.log_live = false; p.log_batch.reset(); p.log_finish.clear(); }
+    else if (op == "get" || op == "subscribe") {
+      if (p.max_bytes < 2048 || companion_busy()) { cJSON_Delete(body); error(p, id, "busy"); return; }
+      uint32_t lost = 0; auto view = log_snapshot(lost);
+      if (!view) { cJSON_Delete(body); error(p, id, "busy"); return; }
+      uint32_t cursor = number(j, "boot", -1) == int(logs_boot_id()) ? std::max(0, number(j, "after")) : 0;
+      auto *d = cJSON_AddObjectToObject(body, "data"); log_page(d, *view, lost, cursor, p.max_bytes);
+      if (op == "subscribe") { p.log_live = true; p.log_cursor = cursor; }
+    } else { cJSON_Delete(body); error(p, id, "unsupported"); return; }
+  }
+  auto *r = envelope("response", p.session);
+  cJSON_AddStringToObject(r, "reply_to", id.c_str()); cJSON_AddStringToObject(r, "resource", resource.c_str());
+  cJSON_AddNumberToObject(r, "schema", 1); cJSON_AddObjectToObject(r, "params");
+  for (auto *c = body->child; c; c = c->next) cJSON_AddItemToObject(r, c->string, cJSON_Duplicate(c, true));
+  auto encoded = dump(r);
+  if (send(p, r)) { p.replies[id] = encoded; if (p.replies.size() > 16) p.replies.erase(p.replies.begin()); }
+  cJSON_Delete(r); cJSON_Delete(body);
+}
+void pump_logs(Peer &p, int64_t now) {
+  if (p.log_batch && now > p.log_deadline) { p.log_batch.reset(); p.log_finish.clear(); notice("日志发送超时"); }
+  if (p.log_batch) power_hold(2000);
+  if (!p.log_finish.empty() || companion_busy() || !p.ready || p.tx.size() >= 2 || now < p.log_at) return;
+  p.log_at = now + 1000;
+  auto view = p.log_batch;
+  uint32_t lost = p.log_lost;
+  if (!view && p.log_live) view = log_snapshot(lost);
+  if (!view || (!p.log_batch && (!view->count || view->at(view->count - 1).sequence <= p.log_cursor))) return;
+  auto *event = envelope("event", p.session);
+  cJSON_AddStringToObject(event, "resource", "system.logs"); cJSON_AddNumberToObject(event, "schema", 1);
+  auto *d = cJSON_AddObjectToObject(event, "data"); auto cursor = p.log_cursor;
+  log_page(d, *view, lost, cursor, p.max_bytes);
+  if (send(p, event)) {
+    p.log_cursor = cursor;
+    if (p.log_batch) {
+      power_hold(2000);
+      if (!view->count || cursor >= view->at(view->count - 1).sequence) p.log_finish = str(event, "id");
+    }
+  }
+  cJSON_Delete(event);
+}
 void accept(Peer &p, const std::string &text) {
   auto *j = parse(text);
   if (!j)
@@ -275,12 +356,14 @@ void accept(Peer &p, const std::string &text) {
       return;
     }
     p.max_bytes = max_bytes;
+    p.companion = str(j, "companion").find("logs-v1") != std::string::npos;
     if (p.session.empty()) p.connected = now_ms();
     p.session = session;
     acknowledge(p, id);
     auto *h = envelope("hello", session);
     cJSON_AddNumberToObject(h, "max_bytes", 4096);
     cJSON_AddBoolToObject(h, "commands", false);
+    cJSON_AddStringToObject(h, "companion", "text-image-v1,logs-v1");
     send(p, h);
     cJSON_Delete(h);
     if (p.probe.empty()) {
@@ -304,6 +387,7 @@ void accept(Peer &p, const std::string &text) {
     auto ref = str(j, "reply_to");
     for (auto it = p.tx.begin(); it != p.tx.end(); ++it)
       if (it->id == ref && it->offset == it->bytes.size()) {
+        if (it->id == p.log_finish) { p.log_finish.clear(); p.log_batch.reset(); notice("日志已发送到数据站"); }
         p.tx.erase(it);
         break;
       }
@@ -311,6 +395,10 @@ void accept(Peer &p, const std::string &text) {
     return;
   }
   acknowledge(p, id);
+  if (type == "request" && p.replies.count(id)) {
+    auto *reply = parse(p.replies[id]); if (reply) { send(p, reply); cJSON_Delete(reply); }
+    cJSON_Delete(j); return;
+  }
   if (std::find(p.seen.begin(), p.seen.end(), id) != p.seen.end()) {
     cJSON_Delete(j);
     return;
@@ -318,6 +406,10 @@ void accept(Peer &p, const std::string &text) {
   p.seen.push_back(id);
   if (p.seen.size() > 16)
     p.seen.pop_front();
+  if (type == "request" && number(j, "schema") == 1 &&
+      (str(j, "resource") == "info.text" || str(j, "resource") == "system.logs")) {
+    local_request(p, j); cJSON_Delete(j); return;
+  }
   if (type == "response" && str(j, "reply_to") == p.probe &&
       str(j, "resource") == "system.health" && str(j, "status") == "succeeded")
     { if (!p.ready) p.connected = now_ms(); p.ready = true; ble_data_ready(p.conn, true); }
@@ -440,8 +532,7 @@ void configure(const std::string &s, bool persist) {
       if (cJSON_IsString(v))
         wake_resources.push_back(v->valuestring);
   settings = s;
-  service = sv;
-  scope = sc;
+  { Guard g(mutex); service = sv; scope = sc; }
   endpoint = url;
   token = tk;
   plans = std::move(next);
@@ -529,6 +620,7 @@ void process(Message &m) {
       }
     ble_data_drop(m.conn);
   } else if (m.kind == 2) {
+    companion_disconnect(m.conn);
     auto *p = peer(m.conn);
     if (p)
       *p = Peer{};
@@ -577,6 +669,15 @@ void process(Message &m) {
     sync_requested = true;
     for (auto &p : plans)
       p.due = 0;
+  } else if (m.kind == 11) {
+    Peer *target = peer(active);
+    if (!target || !target->ready || !target->companion) for (auto &p : peers) if (p.ready && p.companion) { target = &p; break; }
+    if (!target || !target->ready || !target->companion || target->max_bytes < 2048) { notice("请先连接蓝牙数据站"); return; }
+    if (companion_busy()) { notice("文字传输中，请稍后发送日志"); return; }
+    target->log_batch = log_snapshot(target->log_lost); target->log_cursor = 0; target->log_finish.clear();
+    target->log_deadline = now_ms() + 120000;
+    if (!target->log_batch) notice("日志忙，请重试");
+    else power_hold(2000);
   } else if (m.kind == 10) {
     work.clear();
     busy = false;
@@ -608,6 +709,7 @@ void worker(void *) {
       process(*m);
       delete m;
     }
+    companion_tick();
     int64_t now = now_ms();
     if (disconnect_at) {
       if (now >= disconnect_at) {
@@ -622,6 +724,7 @@ void worker(void *) {
     for (auto &p : peers)
       if (p.conn >= 0) {
         pump(p);
+        pump_logs(p, now);
         if (!p.ready && protocol::handshake_expired(!p.session.empty(), now - p.connected)) {
           ble_data_drop(p.conn,"handshake_timeout");
           continue;
@@ -778,6 +881,7 @@ void worker(void *) {
 }
 } // namespace
 void data_init() {
+  companion_init();
   mutex = xSemaphoreCreateMutex();
   queue = xQueueCreate(20, sizeof(Message *));
   if (!mutex || !queue)
@@ -821,6 +925,8 @@ void data_init() {
   if (!xTaskCreateStatic(worker, "data", sizeof stack, nullptr, 4, stack, &task))
     abort();
 }
+bool companion_send_logs() { return post(11, -1); }
+std::string data_identity() { Guard g(mutex); auto *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "service", service.c_str()); cJSON_AddStringToObject(j, "scope", scope.c_str()); auto s = dump(j); cJSON_Delete(j); return s; }
 void data_link(int c, bool v) { post(v ? 1 : 2, c); }
 bool data_receive(int c, const uint8_t *p, size_t n) { return post(3, c, p, n); }
 void data_subscribed(int c, bool v) {

@@ -3,6 +3,7 @@
 #include "esp_err.h"
 namespace ya {
 void logs_init();
+uint32_t logs_boot_id();
 void logs_load_level(); // after config_init, before board/services
 int logs_level();
 esp_err_t logs_setting(int level); // non-GUI: persist, then apply

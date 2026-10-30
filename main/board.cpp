@@ -1,4 +1,5 @@
 #include "notifications.hpp"
+#include "storage_policy.hpp"
 #include "esp_err.h"
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -226,12 +227,15 @@ void board_shutdown() {
   board_volume();
   notice(io_error ? "关机失败，电源管理通信错误" : "关机未完成，请检查电源管理");
 }
+static std::atomic<bool> flash_checked{false};
+void storage_retry() { flash_checked = false; }
 void board_service_tick() {
-  static bool flash_checked = false;
   static int64_t next_sample = 0;
   if (now_ms() < next_sample)
     return;
   next_sample = now_ms() + 5000;
+  // Match shutdown: mutation must precede storage whenever both are needed.
+  Guard mutation(mutation_mutex);
   Guard storage(storage_mutex);
   if (!flash_checked) {
     flash_checked = true;
@@ -241,10 +245,27 @@ void board_service_tick() {
     conf.max_files = 2;
     // Displaying free space never authorizes formatting an existing partition.
     conf.format_if_mount_failed = false;
-    auto e = esp_vfs_spiffs_register(&conf);
+    bool already_mounted;
+    { Guard g(state_mutex); already_mounted = state.flash_mounted; }
+    auto e = already_mounted ? ESP_OK : esp_vfs_spiffs_register(&conf);
     auto *partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                                ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "storage");
+    // Only a completely erased partition can be initialized automatically.
+    // A failed read or any existing byte preserves the partition unchanged.
+    if (e != ESP_OK && partition && !ota_busy) {
+      auto contents = storage_policy::inspect(partition->size, [&](size_t offset, uint8_t *block, size_t n) {
+        if (ota_busy) return false;
+        auto result = esp_partition_read(partition, offset, block, n);
+        taskYIELD(); return result == ESP_OK;
+      });
+      if (contents == storage_policy::Contents::ERASED && !ota_busy) {
+        { Guard g(state_mutex); strlcpy(state.flash_note, "空白分区，正在初始化", sizeof state.flash_note); }
+        conf.format_if_mount_failed = true; e = esp_vfs_spiffs_register(&conf);
+      }
+    }
     Guard g(state_mutex);
+    state.flash_error = e;
+    strlcpy(state.flash_note, e == ESP_OK ? "已挂载" : "挂载失败，已保留原数据", sizeof state.flash_note);
     state.flash_mounted = e == ESP_OK;
     state.flash_total = partition ? partition->size : 0;
   }
@@ -272,6 +293,7 @@ void board_service_tick() {
       state.flash_free = flash_used <= flash_total ? flash_total - flash_used : 0;
     } else {
       state.flash_capacity_valid = false;
+      if (flash) strlcpy(state.flash_note, "已挂载，容量读取失败", sizeof state.flash_note);
     }
   }
 }

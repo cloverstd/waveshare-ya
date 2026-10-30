@@ -21,11 +21,12 @@ inline size_t log_utf8_prefix(const char *text, size_t n) {
   return n - start < width ? start : n;
 }
 struct LogEntry {
+  uint32_t sequence = 0;
   uint8_t level = 0;
   char text[LOG_TEXT_SIZE]{};
 };
 struct LogBuffer {
-  uint32_t revision = 0, overwritten = 0;
+  uint32_t revision = 0, overwritten = 0, next_sequence = 1;
   unsigned start = 0, count = 0;
   LogEntry entries[LOG_CAPACITY]{};
   const LogEntry &at(unsigned i) const { return entries[(start + i) % LOG_CAPACITY]; }
@@ -35,6 +36,7 @@ struct LogBuffer {
     if (count == LOG_CAPACITY) { start = (start + 1) % LOG_CAPACITY; ++overwritten; }
     else ++count;
     auto &e = entries[index];
+    e.sequence = next_sequence++;
     e.level = level;
     size_t n = std::min(strlen(text), sizeof(e.text) - 1);
     n = log_utf8_prefix(text, n);
@@ -44,7 +46,7 @@ struct LogBuffer {
   }
   void clear() { start = count = overwritten = 0; ++revision; }
 };
-// The pinned ESP-IDF Log V1 supplies one fully formatted entry per call.
+// Wi-Fi may split prefix, body and newline over multiple Log V1 calls.
 inline int log_line_level(const char *text) {
   if (!text) return 0;
   if (text[0] == '\033' && text[1] == '[') {
@@ -55,7 +57,7 @@ inline int log_line_level(const char *text) {
   }
   constexpr const char *levels = "EWIDV";
   const char *p = strchr(levels, *text);
-  return *text && p && text[1] == ' ' ? int(p - levels) + 1 : 0;
+  return *text && p && (text[1] == ' ' || text[1] == '(') ? int(p - levels) + 1 : 0;
 }
 // Remove terminal escapes and control bytes. Never leave a partial UTF-8 tail.
 inline void log_clean(char *text, size_t capacity, size_t formatted_size) {

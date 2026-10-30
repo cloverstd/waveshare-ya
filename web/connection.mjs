@@ -11,8 +11,8 @@ export function classify(error,stage){
  return {retry:true,message:'蓝牙连接中断：'+error.message};
 }
 export class Connection {
- constructor({bluetooth,onState=()=>{},onLog=()=>{},onChannel=()=>{},onMessage=()=>{},hello,auto=()=>true,timers=globalThis}){
-  Object.assign(this,{bluetooth,onState,onLog,onChannel,onMessage,hello,auto,timers});
+ constructor({bluetooth,onState=()=>{},onLog=()=>{},onChannel=()=>{},onMessage=()=>{},onIdentity=()=>{},hello,auto=()=>true,timers=globalThis}){
+  Object.assign(this,{bluetooth,onState,onLog,onChannel,onMessage,onIdentity,hello,auto,timers});
   this.generation=0;this.stopped=true;this.pending=null;this.tail=Promise.resolve();this.id=0;this.listeners=[];
  }
  state(stage,label){this.stage=stage;this.onState(label);}
@@ -71,7 +71,8 @@ export class Connection {
     ensure();if(!/insufficient.*(?:encrypt|authenticat)|GATT operation failed for unknown reason/i.test(e.message)||Date.now()>authDeadline)throw e;
     await new Promise(resolve=>this.timers.setTimeout(resolve,1000));ensure();
    }}
-   await this.manage('status');ensure();
+   const deviceStatus=await this.manage('status');ensure();
+   if(deviceStatus.data_identity){const identity=JSON.parse(deviceStatus.data_identity);if(typeof identity.service==='string'&&typeof identity.scope==='string')this.onIdentity(identity);}
    this.state('services','正在发现数据服务');
    const svc=await server.getPrimaryService(UUID.service);ensure();
    const rx=await svc.getCharacteristic(UUID.rx);ensure();const tx=await svc.getCharacteristic(UUID.tx);ensure();
