@@ -4,3 +4,6 @@ dependencies:
     version: "==2.0.1"
     override_path: "../components/waveshare__esp32_s3_touch_amoled_2_16"
   lvgl/lvgl: "==9.3.0"
+  espressif/esp_delta_ota: "==1.1.4"
+  # Preserve the existing decoder while resolving the OTA dependency.
+  espressif/esp_lv_decoder: "==0.4.3"

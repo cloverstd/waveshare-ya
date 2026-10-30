@@ -30,6 +30,9 @@ def main():
         raise SystemExit('Release identity or digest mismatch')
     subprocess.run([sys.executable, '-m', 'espsecure', 'verify_signature', '--version', '2',
                     '--keyfile', str(ROOT / 'docs/ota-signing.pub'), str(image)], check=True, capture_output=True)
+    if 'delta_index_url' in m:
+        from delta_release import verify_delta
+        verify_delta(a.out, m)
     if a.provenance:
         (a.out / 'release-info.json').write_text(json.dumps({
             'repository': 'cloverstd/waveshare-ya', 'tag': a.tag, 'version': version,
