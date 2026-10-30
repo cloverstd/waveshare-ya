@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {wrapText,packText} from '../web/text-render.mjs';
 import {inflateSync} from 'node:zlib';
+import {setTimeout as delay} from 'node:timers/promises';
 let fixtureId=0;
 async function fixture({failure='',errorCode='storage_error',deferCommit=false}={}){
  const elements=new Map();
@@ -13,8 +14,8 @@ async function fixture({failure='',errorCode='storage_error',deferCommit=false}=
  const response=async m=>inbound({type:'response',reply_to:m.id,status:m.op===failure?'failed':'succeeded',error:{code:errorCode},data:m.resource==='system.logs'?{boot:1,entries:[{sequence:1,text:'W (1) wifi: body'}],next:1,more:false,overwritten:0,dropped:0}:{}});
  const ch={async send(m){sent.push(m);if(m.type==='request'){if(m.op==='commit'&&deferCommit)commit=()=>response(m);else queueMicrotask(()=>response(m));}}};
  const connect=async()=>{c.onChannel(ch,'session',{service:'ya-local',scope:'default'});await inbound({type:'hello',companion:'text-image-v1,logs-v1'});c.state('ready','连接就绪');};
- const settle=()=>new Promise(r=>setTimeout(r,10));
- return {c,el:id=>elements.get(id),sent,connect,settle,inbound,commit:()=>commit?.(),fail:op=>{failure=op;}};
+ const waitFor=async predicate=>{const deadline=performance.now()+3000;while(!predicate()){assert.ok(performance.now()<deadline,'Timed out waiting for companion state');await delay(1);}};
+ return {c,el:id=>elements.get(id),sent,connect,waitFor,inbound,commit:()=>commit?.(),fail:op=>{failure=op;}};
 }
 test('wrap preserves whitespace, empty lines and emoji graphemes',()=>{
  assert.deepEqual(wrapText(' a\n\n👩‍💻X',s=>[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(s)].length,2),[' a','','👩‍💻X']);
@@ -28,10 +29,10 @@ test('packet contains original UTF8 and little endian RGB565 after deflate',asyn
 });
 test('offline text waits for capable session then uses begin chunk commit',async()=>{
  const f=await fixture();await f.el('save-note').onclick();assert.match(f.el('note-state').textContent,/暂存/);assert.equal(f.sent.length,0);
- await f.connect();await f.settle();assert.deepEqual(f.sent.filter(m=>m.type==='request').map(m=>m.op),['begin','chunk','commit']);assert.match(f.el('note-state').textContent,/已接收并保存/);
+ await f.connect();await f.waitFor(()=>/已接收并保存/.test(f.el('note-state').textContent));assert.deepEqual(f.sent.filter(m=>m.type==='request').map(m=>m.op),['begin','chunk','commit']);assert.match(f.el('note-state').textContent,/已接收并保存/);
 });
 test('transport receipt alone does not mark text delivered',async()=>{
- const f=await fixture({deferCommit:true});await f.connect();const send=f.el('save-note').onclick();await f.settle();
+ const f=await fixture({deferCommit:true});await f.connect();const send=f.el('save-note').onclick();await f.waitFor(()=>f.sent.some(m=>m.op==='commit'));
  assert.doesNotMatch(f.el('note-state').textContent,/已接收并保存/);await f.commit();await send;assert.match(f.el('note-state').textContent,/已接收并保存/);
 });
 test('storage failure retains input and cancels incomplete transfer',async()=>{
@@ -52,7 +53,7 @@ test('log pull and live events deduplicate by boot and sequence',async()=>{
  await f.inbound({type:'event',resource:'system.logs',data:{boot:2,entries:[{sequence:1,text:'new boot'}],overwritten:0,dropped:0}});assert.match(f.el('device-log').textContent,/new boot/);assert.doesNotMatch(f.el('device-log').textContent,/wifi/);
 });
 test('disconnect during commit never reports delivery and keeps original input',async()=>{
- const f=await fixture({deferCommit:true});await f.connect();const send=f.el('save-note').onclick();await f.settle();
+ const f=await fixture({deferCommit:true});await f.connect();const send=f.el('save-note').onclick();await f.waitFor(()=>f.sent.some(m=>m.op==='commit'));
  f.c.state('disconnected','已断开');await send;
  assert.match(f.el('note-state').textContent,/连接已断开/);assert.doesNotMatch(f.el('note-state').textContent,/已接收并保存/);assert.equal(f.el('note').value,'测试𠮷🙂\ntext');
 });
