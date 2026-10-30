@@ -82,6 +82,31 @@ static void send_reply(uint16_t conn, const char *str) {
       ble_gatts_notify_custom(conn, tx_handle, om);
   }
 }
+// GATT callbacks already sit beneath the NimBLE/ATT call chain. Keep its
+// management reply snapshot bounded instead of putting all peers/APs on stack.
+struct ManagementStatus {
+  Battery battery;
+  char ip[24], wifi_ssid[33];
+  int wifi_rssi;
+  bool time_valid, rtc_valid, wifi_connected, phone_connected, ble_services_valid;
+  int64_t last_time_sync;
+  OtaPhase ota_phase;
+  uint32_t ota_progress, ota_received, ota_total;
+};
+static ManagementStatus management_status() {
+  ManagementStatus s{};
+  Guard g(state_mutex);
+  s.battery = state.battery;
+  strlcpy(s.ip, state.ip, sizeof s.ip);
+  strlcpy(s.wifi_ssid, state.wifi_ssid, sizeof s.wifi_ssid);
+  s.wifi_rssi = state.wifi_rssi;
+  s.time_valid = state.time_valid; s.rtc_valid = state.rtc_valid;
+  s.wifi_connected = state.wifi_connected; s.phone_connected = state.phone_connected;
+  s.ble_services_valid = state.ble_services_valid;
+  s.last_time_sync = state.last_time_sync; s.ota_phase = state.ota_phase;
+  s.ota_progress = state.ota_progress; s.ota_received = state.ota_received; s.ota_total = state.ota_total;
+  return s;
+}
 static void rpc(uint16_t conn, const char *text) {
   auto *j = flat_json_object(text, strlen(text)) ? cJSON_Parse(text) : nullptr;
   auto *result = cJSON_CreateObject();
@@ -96,7 +121,7 @@ static void rpc(uint16_t conn, const char *text) {
     auto *op = cJSON_GetObjectItem(j, "op");
     if (cJSON_IsNumber(v) && v->valueint == 1 && cJSON_IsString(op)) {
       if (!strcmp(op->valuestring, "status")) {
-        auto s = snapshot();
+        auto s = management_status();
         auto c = config();
         cJSON_AddStringToObject(result, "data_identity", data_identity().c_str());
         cJSON_AddStringToObject(result, "version", esp_app_get_description()->version);

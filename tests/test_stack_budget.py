@@ -14,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
     ("main.cpp", "void app_main()", 512),
     ("board.cpp", "void ya::key_task(void*)", 512),
     ("bluetooth.cpp", "void ya::ble_stack_init()", 512),
+    ("bluetooth.cpp", "void ya::rpc(uint16_t, const char*)", 1536),
     ("ota.cpp", "void ya::ota_boot_check()", 1024),
     ("ota.cpp", "void ya::check_task(void*)", 8192),
     ("ota.cpp", "void ya::install_task(void*)", 8192),

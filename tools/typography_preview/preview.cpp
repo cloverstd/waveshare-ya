@@ -3,6 +3,7 @@
 #include "typography.hpp"
 #include "boot_view.hpp"
 #include "ota_view.hpp"
+#include "status_view.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -92,6 +93,7 @@ static void ota() {
   s.checking = s.busy = true;
   auto save = [&](const char *name) {
     ya::ota_view_update(view, s); lv_obj_update_layout(o); shot(o, name);
+    assert(!strcmp(lv_label_get_text(view.source), "https://ya.cloverstd.com"));
     printf("%s: view height=%d, scroll=%d\n", name, int(lv_obj_get_height(view.root)), int(lv_obj_get_scroll_bottom(content)));
   };
   save("ota-checking");
@@ -116,12 +118,43 @@ static void ota() {
   save("ota-boot-verify");
   lv_obj_delete(o);
 }
+static void status() {
+  auto *o = root();
+  label(o, "10:42", type::clock, 28, 30, 76);
+  label(o, "系统状态", type::title, 176, 28, 128);
+  auto *content = lv_obj_create(o); lv_obj_remove_style_all(content);
+  lv_obj_set_pos(content, 24, 72); lv_obj_set_size(content, 432, 384);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(content, 12, 0); lv_obj_set_scroll_dir(content, LV_DIR_VER);
+  auto view = ya::status_view_create(content);
+  ya::StatusViewData s{};
+  s.valid = s.present = true; s.percent = 89; s.usb = s.charging = true;
+  s.stats.mode = ya::battery_stats::Mode::CHARGING; s.stats.phase = ya::battery_stats::Phase::READY;
+  s.stats.change_percent = 12; s.stats.session_seconds = 3600; s.stats.remaining_minutes = 130;
+  s.stats.recent_rate = 5.5;
+  for (int i = 0; i < 4; ++i) { s.available[i] = i != 3; s.total[i] = 100; s.free[i] = 20 + 15 * i; }
+  s.wifi = "已连接\nDemo-WiFi"; s.bluetooth = "等待连接\n外设 0 台";
+  ya::status_view_update(view, s); shot(o, "status-usb");
+  lv_obj_scroll_to_y(content, 240, LV_ANIM_OFF); shot(o, "status-resources");
+  s.usb = s.charging = false; s.percent = 9;
+  s.stats.mode = ya::battery_stats::Mode::DISCHARGING; s.stats.change_percent = 23;
+  ya::status_view_update(view, s); lv_obj_scroll_to_y(content, 0, LV_ANIM_OFF); shot(o, "status-battery");
+  s.stats.phase = ya::battery_stats::Phase::LEARNING; s.stats.recent_rate = -1;
+  ya::status_view_update(view, s); shot(o, "status-learning");
+  s.valid = false; ya::status_view_update(view, s); shot(o, "status-unavailable");
+  for (int i = 0; i < 4; ++i) {
+    auto *c = lv_obj_get_parent(view.resources[i]);
+    assert(lv_obj_get_width(c) == 210);
+    assert(lv_arc_get_value(view.resources[i]) == (i == 3 ? 0 : 80 - 15 * i));
+  }
+  lv_obj_delete(o);
+}
 int main() {
   lv_init(); auto *display = lv_display_create(480, 480);
   static uint8_t buffer[480 * 12 * 2];
   lv_display_set_buffers(display, buffer, nullptr, sizeof buffer, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(display, flush);
-  glyph_checks(); specimen(); ota();
+  glyph_checks(); specimen(); ota(); status();
   auto *screen = lv_screen_active(); auto count = lv_obj_get_child_count(screen);
   auto animations = lv_anim_count_running();
   auto *boot = ya::boot_view_create(screen, type::body); shot(boot, "boot");

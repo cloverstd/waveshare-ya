@@ -14,6 +14,7 @@ ESP32-S3-Touch-AMOLED-2.16 专用，ESP-IDF 5.5.5 / 官方 BSP 2.0.1 / LVGL 9.3.
 - [OTA 服务端接口合同](docs/OTA_API.md)
 - [相册应用与管理](docs/GALLERY.md)
 - [应用开发与系统服务](docs/APPS.md)
+- [内置存储与旧 SPIFFS 卷兼容](docs/STORAGE.md)
 - [字体与2×排版单位](docs/TYPOGRAPHY.md)
 - [日志应用与记录级别（默认 Warning）](docs/LOGS.md)
 - [Wi-Fi、多网络与 KVR](docs/WIFI.md)
