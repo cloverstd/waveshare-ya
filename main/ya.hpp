@@ -210,7 +210,8 @@ void wifi_connect(const char *, const char *);
 void wifi_apply();
 void wifi_forget();
 void wifi_tick();
-void ble_init();
+void ble_stack_init(); // reserve controller/retention memory before board and UI allocations
+void ble_init();       // register services and start host after data services exist
 const char *ble_name();
 void ble_apply();
 void ble_scan();

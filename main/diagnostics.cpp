@@ -249,6 +249,13 @@ static void task(void *) {
         cJSON_AddNumberToObject(out, "internal_heap", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         cJSON_AddNumberToObject(out, "internal_largest",
                                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(out, "retention_heap", heap_caps_get_free_size(MALLOC_CAP_RETENTION));
+        cJSON_AddNumberToObject(out, "retention_largest",
+                                heap_caps_get_largest_free_block(MALLOC_CAP_RETENTION));
+        cJSON_AddNumberToObject(out, "dma_heap",
+                                heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+        cJSON_AddNumberToObject(out, "dma_largest",
+                                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
         cJSON_AddNumberToObject(out, "epoch", time(nullptr));
         cJSON_AddBoolToObject(out, "ble_enabled", cf.ble);
         cJSON_AddStringToObject(out,"ble_name",ble_name());

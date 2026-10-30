@@ -589,7 +589,7 @@ static void host(void *) {
   nimble_port_run();
   nimble_port_freertos_deinit();
 }
-void ble_init() {
+void ble_stack_init() {
   ESP_LOGI("ble_budget", "internal=%u retention=%u largest_retention=%u",
            unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
            unsigned(heap_caps_get_free_size(MALLOC_CAP_RETENTION)),
@@ -600,6 +600,11 @@ void ble_init() {
     note("蓝牙初始化失败");
     abort();
   }
+}
+void ble_init() {
+  // The controller is initialized early, but callbacks/advertising must not
+  // run until config, board, OTA and data services have all been constructed.
+  configASSERT(ble_mutex);
   ble_svc_gap_init();
   ble_svc_gatt_init();
   uint8_t mac[6]{};

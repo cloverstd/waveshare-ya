@@ -36,6 +36,8 @@ python -m esptool --chip esp32s3 --port PORT write_flash 0 private/backups/origi
 
 ## 开发诊断
 
+启动内存策略：保持`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024`和`CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768`。系统在配置/电源管理之后优先初始化NimBLE控制器，保护其专用保留内存；完成BSP、音频及首帧DMA后，在Wi-Fi/HTTP/数据服务创建之前将普通对象切换为PSRAM优先。不要在BSP/SPI/首帧准备之前全局设置阈值0。BLE主机任务/广播仍在数据服务创建后启动，显式内部任务栈和DMA缓冲不迁移到PSRAM。USB `status`增加`retention_heap/retention_largest/dma_heap/dma_largest`，分别观察专用能力的总空闲和最大连续块，不能用总PSRAM空闲量代替。
+
 `tools/device.py` 通过 USB JSON 行协议读取状态和导出屏幕渲染图。例：`python tools/device.py '{"op":"status"}'`。Wi-Fi 配网用权限 0600 的 JSON 输入文件加 `--file`；不要将密码放进 shell 命令历史。此接口是物理 USB 开发接口，不提供远程网络 shell。
 
 页面 ID：0 桌面、1 设置、2 系统状态、3 Wi-Fi、4 BLE、5 显示、6 声音、7 存储、8 OTA、9 系统、10 四角校准、12 日期与时间；9 为系统状态兼容入口。`{"op":"page","id":2}` 用于切换验收页面。`--snapshot artifacts/battery.png` 导出渲染图；截图不能证明实体屏幕的触摸或物理遮挡情况。

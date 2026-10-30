@@ -38,6 +38,7 @@ extern "C" void app_main() {
   }
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ya::power_init();
+  ya::ble_stack_init();
   ESP_ERROR_CHECK(ya::board_init());
   ya::services_init();
   ya::ui_start();

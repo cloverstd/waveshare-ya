@@ -1,6 +1,7 @@
 #include "notifications.hpp"
 #include "storage_policy.hpp"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
 #include "driver/gpio.h"
@@ -111,6 +112,10 @@ esp_err_t board_init() {
     Guard g(state_mutex);
     state.battery = battery_read();
   }
+  // BSP/SPI contexts, internal draw buffers and the first DMA flush are ready.
+  // Move ordinary startup/service objects to PSRAM before Wi-Fi/HTTP/data init;
+  // explicit INTERNAL/DMA allocations and all task stacks keep their caps.
+  heap_caps_malloc_extmem_enable(0);
   return ESP_OK;
 }
 Battery battery_read() {

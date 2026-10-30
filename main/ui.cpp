@@ -1880,11 +1880,15 @@ static void refresh(lv_timer_t *) {
   }
 }
 esp_err_t ui_boot_start() {
-  if (power_silent_boot())
-    return ESP_OK;
+  const bool silent = power_silent_boot();
   if (!bsp_display_lock(-1))
     return ESP_ERR_TIMEOUT;
-  boot_root = boot_view_create(lv_screen_active(), typography::body);
+  if (!silent)
+    boot_root = boot_view_create(lv_screen_active(), typography::body);
+  else {
+    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
+  }
   lv_obj_invalidate(lv_screen_active());
   bsp_display_unlock();
 
@@ -1896,18 +1900,14 @@ esp_err_t ui_boot_start() {
   e = esp_lv_adapter_pause(1000);
   if (e != ESP_OK)
     return e;
-  e = bsp_display_brightness_set(config().brightness);
+  e = bsp_display_brightness_set(silent ? 0 : config().brightness);
   if (e == ESP_OK)
-    e = bsp_display_sleep_set(false);
+    e = bsp_display_sleep_set(silent);
   const auto resumed = esp_lv_adapter_resume();
   return e != ESP_OK ? e : resumed;
 }
 void ui_start() {
   bsp_display_lock(-1);
-  // Initialize BSP/SPI/Wi-Fi with the pinned internal-allocation policy first.
-  // Once the initial display flush completes, keep ordinary runtime/UI objects
-  // in PSRAM; explicit DMA allocations and task stacks retain their own caps.
-  heap_caps_malloc_extmem_enable(0);
   auto *display = lv_display_get_default();
   auto *theme = lv_theme_default_init(display, accent(), lv_color_hex(0x315a71), true, typography::body);
   lv_display_set_theme(display, theme);

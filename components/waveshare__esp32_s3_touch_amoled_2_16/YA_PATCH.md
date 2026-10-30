@@ -31,3 +31,17 @@ Timer-driven silent boots keep output off and create no spinner. Pin mapping,
 QSPI speed, DMA buffers, PMU rails and dependency versions are unchanged. This
 does not control the panel during ROM/bootloader execution; physical startup and
 deep-sleep wake behavior require acceptance on the actual board.
+
+2026-10-30 boot-memory fix: `bsp_display_lock()` converts the adapter's
+`esp_err_t` result to its documented boolean contract with `== ESP_OK`.
+Returning `ESP_OK` directly previously reported a successfully acquired lock
+as false, causing the startup overlay to abort with a false timeout.
+
+The system now initializes the NimBLE controller before board allocations to
+protect its retention-memory allocation. The host task and advertising still
+start only after board/data services exist. After BSP/audio initialization and
+a drained first display flush (also on a silent boot), ordinary allocations
+switch to PSRAM preference before Wi-Fi/HTTP/data initialization. Keep the
+startup 1024-byte internal preference and the 32 KiB dedicated internal pool;
+do not globally set the threshold to zero before SPI contexts/first flush are
+ready. Both 12-row DMA buffers and all task stacks remain internal.
