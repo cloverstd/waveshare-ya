@@ -654,7 +654,19 @@ void wifi_foreground(bool enabled) { foreground = enabled; }
 void wifi_tick() {
   Guard lock(mutex);
   Guard m(mutation_mutex);
-  if (ota_busy || !runtime_allowed || !started)
+  if (!runtime_allowed || !started)
+    return;
+  bool connected_now;
+  {
+    Guard g(state_mutex);
+    connected_now = state.wifi_connected;
+  }
+  // Read-only link telemetry must keep refreshing while OTA blocks network changes.
+  if (connected_now && now_ms() >= rssi_at) {
+    rssi_at = now_ms() + 5000;
+    sample_ap();
+  }
+  if (ota_busy)
     return;
   EventData event;
   for (int n = 0; n < 8 && xQueueReceive(events, &event, 0) == pdTRUE; ++n) {
@@ -716,16 +728,11 @@ void wifi_tick() {
   }
   if (waiting_report && now_ms() >= report_until)
     btm_query();
-  bool connected_now;
   int64_t scanned;
   {
     Guard g(state_mutex);
     connected_now = state.wifi_connected;
     scanned = state.wlan.scan_at;
-  }
-  if (connected_now && now_ms() >= rssi_at) {
-    rssi_at = now_ms() + 5000;
-    sample_ap();
   }
   if (connected_now && !attempt && !scanning && !roaming &&
       wifi_policy::roam_due(now_ms(), weak_since, last_roam)) {

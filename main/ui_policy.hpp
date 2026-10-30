@@ -1,6 +1,20 @@
 #pragma once
 #include <cstdint>
+#include <cstdio>
 namespace ya::ui_policy {
+inline void format_bytes(char *out, size_t capacity, uint64_t bytes) {
+  static constexpr const char *units[] = {"B", "KB", "MB", "GB", "TB", "PB", "EB"};
+  double value = bytes;
+  unsigned unit = 0;
+  while (value >= 1024 && unit < 6) {
+    value /= 1024;
+    ++unit;
+  }
+  if (unit)
+    std::snprintf(out, capacity, "%.2f %s", value, units[unit]);
+  else
+    std::snprintf(out, capacity, "%llu B", (unsigned long long)bytes);
+}
 // Registry app roots return home; pages opened beneath Settings return there.
 // Diagnostic page numbers do not encode the navigation hierarchy.
 constexpr int back_page(int page, bool app_active) {

@@ -1,7 +1,19 @@
 #include "../main/ui_policy.hpp"
 #include <cassert>
 #include <initializer_list>
+#include <cstring>
 int main() {
+  using ya::ui_policy::format_bytes;
+  char size[32];
+  format_bytes(size, sizeof size, 0); assert(!strcmp(size, "0 B"));
+  format_bytes(size, sizeof size, 1023); assert(!strcmp(size, "1023 B"));
+  format_bytes(size, sizeof size, 1024); assert(!strcmp(size, "1.00 KB"));
+  format_bytes(size, sizeof size, 114845); assert(!strcmp(size, "112.15 KB"));
+  format_bytes(size, sizeof size, 2232320); assert(!strcmp(size, "2.13 MB"));
+  format_bytes(size, sizeof size, UINT64_MAX); assert(!strcmp(size, "16.00 EB"));
+  char short_size[3] = {'x', 'x', 'x'};
+  format_bytes(short_size, sizeof short_size, UINT64_MAX);
+  assert(short_size[2] == 0);
   using ya::ui_policy::back_page;
   assert(back_page(0, false) == 0);
   for (int page : {1, 2, 11, 13, 14, 20})

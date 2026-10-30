@@ -9,6 +9,7 @@
 #include "power.hpp"
 #include "wake_handoff.hpp"
 #include "ui_policy.hpp"
+#include "ota_view.hpp"
 #include <ctime>
 #include <string>
 #include <algorithm>
@@ -21,7 +22,7 @@ std::atomic<bool> capture_requested{false};
 std::atomic<lv_draw_buf_t *> captured{nullptr};
 static lv_obj_t *root, *content, *headline, *clock_label, *notification, *wifi_icon, *wifi_slash,
     *bluetooth_icon, *bluetooth_slash, *status_icons, *charging_icon, *battery_icon, *battery_tip, *battery_number,
-    *ota_bar = nullptr, *ota_status = nullptr, *ota_bytes = nullptr, *detail = nullptr,
+    *detail = nullptr,
     *list = nullptr, *modal = nullptr, *wake_shield = nullptr;
 static lv_obj_t *ssid_input, *pass_input, *text_input;
 static const App *active = nullptr;
@@ -38,8 +39,7 @@ static lv_obj_t *notice_badge = nullptr, *notice_list = nullptr, *clear_button =
 static lv_obj_t *sys_values[8]{}, *sys_bars[4]{}, *battery_arc = nullptr;
 static lv_obj_t *battery_eta = nullptr, *battery_usage = nullptr;
 static lv_obj_t *ble_summary = nullptr, *ble_code = nullptr, *ble_pair_button = nullptr;
-static lv_obj_t *ota_full_button=nullptr, *ota_delta_button=nullptr, *ota_install_button=nullptr,
-    *ota_check_button=nullptr, *ota_options=nullptr;
+static OtaView ota_view{};
 static OtaMode ota_selected=OtaMode::FULL, ota_confirmed=OtaMode::FULL;
 static char ota_confirm_sha[65]{};
 static uint32_t ota_choice_revision=~0u;
@@ -328,8 +328,7 @@ static void clean() {
   for (auto &v : sys_bars) v = nullptr;
   battery_arc = nullptr; notice_revision = ~0u;
   battery_eta = battery_usage = nullptr;
-  ota_bar = ota_status = ota_bytes = nullptr;
-  ota_full_button=ota_delta_button=ota_install_button=ota_check_button=ota_options=nullptr;
+  ota_view = {};
   list_count = -1;
   lv_obj_clean(content);
   lv_obj_scroll_to_y(content, 0, LV_ANIM_OFF);
@@ -1355,22 +1354,17 @@ static void show(int id) {
     opbutton(content, "安全卸载", Op::SD_UNMOUNT);
     label(content, "拔卡前请安全卸载。挂载失败不会格式化存储卡。");
     break;
-  case 8:
+  case 8: {
     lv_label_set_text(headline, "固件升级");
-    detail = label(content, "");
-    ota_status = label(content, "准备就绪");
-    ota_bar = lv_bar_create(content);
-    lv_obj_set_size(ota_bar, LV_PCT(100), 18);
-    lv_bar_set_range(ota_bar, 0, 100);
-    lv_obj_set_style_bg_color(ota_bar, accent(), LV_PART_INDICATOR);
-    ota_bytes = label(content, "");
-    ota_options=label(content, "正在获取更新信息");
-    ota_delta_button=button(content,"增量更新",[](lv_event_t*) { ota_selected=OtaMode::DELTA; });
-    ota_full_button=button(content,"全量更新",[](lv_event_t*) { ota_selected=OtaMode::FULL; });
-    ota_check_button=opbutton(content,"重新检查",Op::OTA_CHECK);
-    ota_install_button=button(content,"安装所选版本",[](lv_event_t*) {
+    OtaViewActions actions{};
+    actions.check = [](lv_event_t *) {
+      if (!command(Op::OTA_CHECK)) notice("操作队列已满，请重试");
+    };
+    actions.delta = [](lv_event_t *) { ota_selected=OtaMode::DELTA; };
+    actions.full = [](lv_event_t *) { ota_selected=OtaMode::FULL; };
+    actions.install = [](lv_event_t*) {
       const auto &s=ui_snapshot();
-      if (!s.update_available || s.ota_active || s.ota_phase==OtaPhase::CHECKING) {
+      if (!s.update_available || s.ota_active || s.pending || s.ota_phase==OtaPhase::CHECKING) {
         notice("请等待检查完成后再安装"); return;
       }
       if (ota_selected==OtaMode::DELTA && !s.ota_delta_available) {
@@ -1379,10 +1373,12 @@ static void show(int id) {
       ota_confirmed=ota_selected;
       strlcpy(ota_confirm_sha,s.ota_sha,sizeof(ota_confirm_sha));
       auto *p=make_modal("确认安装新版本？");
-      char text[128];
-      snprintf(text,sizeof(text),"版本 %s\n%s · 下载 %.1f KB",s.ota_version,
+      char text[128], size[24];
+      ui_policy::format_bytes(size,sizeof size,
+          ota_confirmed==OtaMode::DELTA ? s.ota_delta_size : s.ota_full_size);
+      snprintf(text,sizeof(text),"版本 %s\n%s · 下载 %s",s.ota_version,
           ota_confirmed==OtaMode::DELTA ? "增量更新" : "全量更新",
-          (ota_confirmed==OtaMode::DELTA ? s.ota_delta_size : s.ota_full_size)/1024.0);
+          size);
       label(p,text);
       label(p,"升级后设备将重启。首次启动异常会自动回退。");
       button(p,"确认安装",[](lv_event_t*) {
@@ -1390,9 +1386,11 @@ static void show(int id) {
         else notice("操作队列已满，请重试");
       });
       button(p,"取消",[](lv_event_t*) {close_modal();});
-    });
-    opbutton(content, "开启网页上传（十分钟）", Op::OTA_SESSION);
-    button(content, "显示升级二维码", [](lv_event_t *) {
+    };
+    actions.upload = [](lv_event_t *) {
+      if (!command(Op::OTA_SESSION)) notice("操作队列已满，请重试");
+    };
+    actions.qr = [](lv_event_t *) {
       const auto &s = ui_snapshot();
       if (!s.ota_url[0]) {
         notice("请先开启网页上传");
@@ -1405,11 +1403,13 @@ static void show(int id) {
       lv_qrcode_set_light_color(q, lv_color_white());
       lv_qrcode_update(q, s.ota_url, strlen(s.ota_url));
       button(p, "关闭", [](lv_event_t *) { close_modal(); });
-    });
-    button(content, "设置在线更新地址", [](lv_event_t *) { url_form(); });
+    };
+    actions.settings = [](lv_event_t *) { url_form(); };
+    ota_view = ota_view_create(content, esp_app_get_description()->version, actions);
     ota_choice_revision=~0u;
     if (!command(Op::OTA_CHECK)) notice("检查任务队列已满，请点击重新检查");
     break;
+  }
   case 9:
     lv_label_set_text(headline, "系统状态");
     ui_battery(content);
@@ -1713,11 +1713,6 @@ static void refresh(lv_timer_t *) {
         snprintf(b, sizeof(b), "TF 卡已挂载\n总容量 %.2f GB / 可用 %.2f GB", s.sd_total / 1e9,
                  s.sd_free / 1e9);
       break;
-    case 8:
-      snprintf(b, sizeof(b), "当前固件 %s\n%s%s", esp_app_get_description()->version,
-               s.update_available ? "可用版本 " : "更新源 ",
-               s.update_available ? s.ota_version : UPDATE_BASE_URL);
-      break;
     case 12: {
       char current[40] = "等待校时", last_sync[40] = "尚未同步";
       tm local{};
@@ -1740,31 +1735,12 @@ static void refresh(lv_timer_t *) {
     }
     set_text(detail, b);
   }
-  if (ota_bar) {
+  if (ota_view.root) {
     if (ota_choice_revision!=s.ota_revision) {
       ota_choice_revision=s.ota_revision;
       ota_selected=s.ota_delta_available ? OtaMode::DELTA : OtaMode::FULL;
     }
     if(s.ota_active) ota_selected=s.ota_mode;
-    bool busy=s.ota_active || s.pending || s.ota_phase==OtaPhase::CHECKING;
-    auto enabled=[](lv_obj_t *o,bool yes) {
-      if (yes) lv_obj_remove_state(o,LV_STATE_DISABLED); else lv_obj_add_state(o,LV_STATE_DISABLED);
-    };
-    enabled(ota_delta_button,!busy && s.update_available && s.ota_delta_available);
-    enabled(ota_full_button,!busy && s.update_available);
-    enabled(ota_install_button,!busy && s.update_available);
-    enabled(ota_check_button,!busy);
-    snprintf(b,sizeof(b),"%s增量更新 · %.1f KB",ota_selected==OtaMode::DELTA ? "● " : "○ ",s.ota_delta_size/1024.0);
-    set_text(lv_obj_get_child(ota_delta_button,0),b);
-    snprintf(b,sizeof(b),"%s全量更新 · %.1f KB",ota_selected==OtaMode::FULL ? "● " : "○ ",s.ota_full_size/1024.0);
-    set_text(lv_obj_get_child(ota_full_button,0),b);
-    if(s.ota_delta_available && s.ota_full_size)
-      snprintf(b,sizeof(b),"增量下载可节省 %.0f%% 流量",100.0*(s.ota_full_size-s.ota_delta_size)/s.ota_full_size);
-    else strlcpy(b,s.ota_delta_note,sizeof(b));
-    set_text(ota_options,b);
-    int progress = std::clamp(s.ota_progress, 0, 100);
-    if (lv_bar_get_value(ota_bar) != progress)
-      lv_bar_set_value(ota_bar, progress, LV_ANIM_OFF);
     const char *phase = "等待操作";
     switch (s.ota_phase) {
     case OtaPhase::CHECKING:
@@ -1800,14 +1776,16 @@ static void refresh(lv_timer_t *) {
     default:
       break;
     }
-    snprintf(b, sizeof(b), "%s\n%s", phase, s.ota_note);
-    set_text(ota_status, b);
-    if (s.ota_total)
-      snprintf(b, sizeof(b), "%d%% · 下载 %lu / %lu 字节\n已写入 %lu 字节", progress, (unsigned long)s.ota_received,
-               (unsigned long)s.ota_total, (unsigned long)s.ota_written);
-    else
-      strlcpy(b, s.ota_phase == OtaPhase::BOOT_VERIFY ? "启动健康检查约需 30 秒" : "", sizeof(b));
-    set_text(ota_bytes, b);
+    bool checking = s.ota_phase==OtaPhase::CHECKING;
+    ota_view_update(ota_view, {
+      c.update_url, phase, s.ota_phase==OtaPhase::CURRENT ? "" : s.ota_note,
+      s.ota_version, s.ota_delta_note,
+      s.update_available, s.ota_active || s.pending || checking, checking, s.ota_active, s.pending,
+      s.ota_phase==OtaPhase::FAILED || s.ota_phase==OtaPhase::ROLLED_BACK,
+      s.ota_delta_available, ota_selected==OtaMode::DELTA,
+      s.ota_received, s.ota_total, s.ota_written, s.ota_full_size, s.ota_delta_size,
+      s.ota_progress
+    });
   }
   if (page_id == 13) notices_refresh();
   if (page_id == 14 && !asleep) logs_refresh();
