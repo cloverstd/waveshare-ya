@@ -70,6 +70,8 @@ extern "C" void app_main() {
                t / 1000, (unsigned long)esp_get_free_heap_size(), battery, valid, wifi, sd,
                t - ya::ui_heartbeat.load());
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // A short press remains latched and wakes this task immediately, even if
+    // the key has already been released before the next periodic power tick.
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
   }
 }

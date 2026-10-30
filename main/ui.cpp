@@ -1400,6 +1400,8 @@ static bool close_dropdown() {
   return false;
 }
 static void input_tick(lv_timer_t *) {
+  if (power_wake_ui.exchange(false))
+    wake();
   clamp_dropdowns();
   auto events = board_key_events();
   if (!events)

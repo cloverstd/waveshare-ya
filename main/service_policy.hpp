@@ -10,14 +10,17 @@ inline bool usb_timeout(int seconds) {
   return seconds == 0 || seconds == 60 || seconds == 300 || seconds == 600;
 }
 
-// Samples must be called frequently (the UI polls GPIO every 16 ms). A key held
+constexpr uint32_t KEY_WAKE = 16;
+
+// Samples must be called frequently, independently of the GUI's sleep state. A key held
 // during boot stays disarmed until released, including the power-on key press.
 struct Key {
   bool initialized = false, raw = false, stable = false, armed = false;
-  bool pressed = false, long_sent = false;
+  bool pressed = false, long_sent = false, wake_sent = false;
   int64_t changed = 0, down = 0;
 
-  uint32_t sample(bool level, int64_t now, uint32_t click, uint32_t hold = 0) {
+  uint32_t sample(bool level, int64_t now, uint32_t click, uint32_t hold = 0,
+                  uint32_t wake = 0) {
     if (!initialized) {
       initialized = true;
       raw = stable = level;
@@ -35,10 +38,12 @@ struct Key {
         if (stable && armed) {
           pressed = true;
           long_sent = false;
+          wake_sent = wake != 0;
+          event = wake;
           down = now;
         } else if (!stable) {
-          if (armed && pressed && !long_sent)
-            event = click;
+          if (armed && pressed && !long_sent && !wake_sent)
+            event = wake ? wake : click;
           pressed = false;
           armed = true;
         }
