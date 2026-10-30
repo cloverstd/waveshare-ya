@@ -1,6 +1,7 @@
 #include "notifications.hpp"
 #include "power.hpp"
 #include "power_policy.hpp"
+#include "wake_handoff.hpp"
 #include "data.hpp"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
@@ -19,7 +20,7 @@ PowerPrefs prefs;
 SemaphoreHandle_t mutex;
 esp_pm_lock_handle_t awake_lock = nullptr;
 std::atomic<int64_t> notify_until{0}, last_notify{-60000}, hold_until{0};
-std::atomic<bool> wake_requested{false};
+power_wake::Handoff wake_handoff;
 bool silent = false;
 std::atomic<bool> paused{false}, syncing{false};
 int64_t off_at = 0, budget = 0;
@@ -69,7 +70,7 @@ bool suspend() {
   return true;
 }
 void deep() {
-  if (wake_requested)
+  if (wake_handoff.pending())
     return;
   if (data_busy() || !data_checkpoint() || !notifications_checkpoint())
     return;
@@ -92,6 +93,9 @@ void deep() {
     if (state.sd_mounted)
       return;
   }
+  // Any later return aborts preparation and restores a card we unmounted.
+  // Declared before mutation so its lock is released before remounting.
+  power_policy::RestoreStorageOnExit restore_storage(mounted, storage_mount);
   if (!suspend())
     return;
   wifi_runtime(false);
@@ -117,7 +121,7 @@ void deep() {
   // Do not use PMU shutdown; charging and RTC supplies stay on.
   vTaskDelay(pdMS_TO_TICKS(100));
   if (!notifications_checkpoint()) return;
-  if (wake_requested || held() || !screen_sleeping)
+  if (wake_handoff.pending() || held() || !screen_sleeping)
     return;
   esp_deep_sleep_start();
 }
@@ -161,9 +165,10 @@ void power_init() {
 }
 bool power_silent_boot() { return silent; }
 void power_request_wake() {
-  wake_requested = true;
-  if (main_task_handle)
-    xTaskNotifyGive(main_task_handle);
+  wake_handoff.request([] {
+    if (main_task_handle)
+      xTaskNotifyGive(main_task_handle);
+  });
 }
 PowerProfile power_profile() {
   bool usb;
@@ -240,10 +245,8 @@ void power_notify() {
 bool power_notification_active() { return now_ms() < notify_until.load(); }
 void power_hold(unsigned ms) { hold_until = now_ms() + std::min(ms, 120000u); }
 void power_tick() {
-  const bool physical_wake = wake_requested.exchange(false);
+  const bool physical_wake = wake_handoff.publish(screen_sleeping, power_wake_ui);
   if (physical_wake) {
-    power_wake_ui = true;
-    screen_sleeping = false;
     silent = false;
     off_at = 0;
     syncing = false;

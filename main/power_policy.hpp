@@ -1,6 +1,22 @@
 #pragma once
 #include <cstdint>
 namespace ya::power_policy {
+// Deep sleep never returns. Every returning preparation path must restore
+// storage that this attempt successfully unmounted, including wake/OTA races.
+template <class Mount> class RestoreStorageOnExit {
+  bool mounted;
+  Mount mount;
+
+public:
+  RestoreStorageOnExit(bool was_mounted, Mount remount) : mounted(was_mounted), mount(remount) {}
+  RestoreStorageOnExit(const RestoreStorageOnExit &) = delete;
+  RestoreStorageOnExit &operator=(const RestoreStorageOnExit &) = delete;
+  ~RestoreStorageOnExit() {
+    if (mounted)
+      mount();
+  }
+};
+
 // Radio suspension belongs to whole-device sleep, never foreground data routing.
 // The persistent Wi-Fi/BLE switches are still enforced by their own services.
 inline bool keep_radios_awake(bool screen_sleeping, unsigned mode, bool protected_work,

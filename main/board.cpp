@@ -13,6 +13,7 @@
 #include "power.hpp"
 #include "service_internal.hpp"
 #include "service_policy.hpp"
+#include "wake_handoff.hpp"
 #include <cmath>
 #include <dirent.h>
 #include <string>
@@ -33,10 +34,7 @@ static void key_task(void *) {
     auto events = back_key.sample(gpio_get_level(GPIO_NUM_0) == 0, now, 1, 0, wake) |
                   home_key.sample(gpio_get_level(GPIO_NUM_18) == 0, now, 2, 0, wake) |
                   power_key.sample(gpio_get_level(GPIO_NUM_16) != 0, now, 4, 8, wake);
-    if ((events & service_policy::KEY_WAKE) || (events && screen_sleeping.load())) {
-      power_request_wake();
-      events &= 8; // A wake gesture only acts again if it reaches the shutdown hold.
-    }
+    events = power_wake::route_keys(events, screen_sleeping.load(), power_request_wake);
     if (events)
       key_events.fetch_or(events);
     vTaskDelay(pdMS_TO_TICKS(16));
