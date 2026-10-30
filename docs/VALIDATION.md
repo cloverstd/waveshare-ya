@@ -1,5 +1,26 @@
 # 验收记录
 
+## 电池统计与0.6.0主线合并验证（2026-10-30）
+
+- PR #2合并前同步`main`提交`feaa726`，保留0.6.0差分OTA和自动检查。冲突为本文件顶部的两份验收记录及生成字体；保留全部历史记录，并基于合并后的界面源码重新生成字体，使OTA与电池统计新增文字同时可用。
+- 固定ESP-IDF 5.5.5 / GCC `esp-14.2.0_20260121` / BSP2.0.1 / LVGL9.3.0构建通过，新版依赖锁检查一致。开发镜像`0.6.0-battery-dev`，2,232,320字节，SHA-256 `25bc175972bcfad2cba2efbe56ee447c02dfcfe5d7e1abea9b8cd685a72b9d68`，现有RSA公钥验证通过。
+- 合并结果的主机测试70项通过、无跳过，网页协议测试34项通过；包含新增差分解码回归与电池算法回放。静态栈预算、公开源文件隐私检查和`git diff --check`通过。相对最新主线，OTA实现、依赖、工作流和Worker文件没有额外修改。
+- 仅完成代码与构建验证，未执行USB写入、OTA或实机功耗/充电曲线校准；先前版本的物理测试不归入此次合并验收。证据为本机`artifacts/battery-merge-build.log`、`battery-merge-tests.log`、`battery-merge-node.log`、`battery-merge-signature.log`与`battery-merge-image.json`，不提交构建产物。
+- 最新组合再同步`main`的`606ae81`（屏幕唤醒与休眠取消后的存储恢复），完整保留双方验收记录和全部Native测试。相对该主线，board/power/wake实现无额外改动。固定工具链构建、依赖锁及RSA验签通过；主机测试73项通过、无跳过，包含按键唤醒、存储恢复、差分解码与电池回放的组合。`0.6.0-battery-dev`签名应用仍为2,232,320字节，SHA-256 `90c27e434c98b40631f13028b3a14eefac32d03e09c5c18f215721c5d5597cf9`。证据为`artifacts/battery-final-build.log`、`battery-final-tests.log`、`battery-final-signature.log`和`battery-final-image.json`；未安装到设备，物理验收边界保持不变。
+
+## 电池耗电与充放电时间估算开发分支（2026-10-30）
+
+- 独立worktree分支`feat/battery-estimates`，基于已提交主分支`1d0c032`；未带入主工作区未提交的OTA或其他并行修改。版本标记`0.5.1-battery-dev`，未发布、未合并、未安装设备。
+- “系统状态”新增监测时长、电量消耗/增加、本段与近期速率、预计剩余可用时间/充满时间。USB/BLE状态新增一致的`battery_stats`对象。说明和充电后段经验权重见[BATTERY_STATS.md](BATTERY_STATS.md)；权重尚未实机标定，不是电流、容量或能量实测。
+- 复用服务线程和PMU驱动：前台每秒、服务暂停时每分钟采样；约1.1KiB固定RAM历史，不新增任务或持久写入。供电/充电切换、样本失效/中断、电量跳变时重建监测段，重启/深睡后重新采样。中文字体用固定lv_font_conv 1.5.3重新生成，保留原许可。
+- ESP-IDF `b774170ff46c393eeb5e495ea37936038d3f4f4f`（5.5.5）、GCC `esp-14.2.0_20260121`、BSP2.0.1、LVGL9.3.0签名构建通过，`dependencies.lock`版本与哈希比对通过。worktree共享SDK时先解析真实路径；最初配置选到PATH中的GCC15.2后被IDF版本检查拒绝，清理本次缓存并以固定GCC重新完成构建，没有放宽版本检查。
+- 签名应用2,232,320字节，小于6MiB槽；SHA-256 `2f72dd043f11c51b46f5b0956d66003f7e8e0fd3c5bc92434820a8516e3f6349`，现有RSA公钥验证成功。A/B与rollback配置保留；故障注入、临时HTTPS CA、硬件Secure Boot和Flash加密关闭，不写eFuse。
+- `YA_BUILD_DIR=build-battery .tools/venv/bin/python -m pytest -q tests`：57项通过，无跳过。新增固件算法回放覆盖稳定耗电、近期速率变化/环形窗口、SOC抖动/校正、无电池/无效电量、时间回退/重复/中断、USB供电不等于充电、充电后段修正、停滞/恢复、100%与PMU充满区别、低电量和100天运行时长。该回放另以AddressSanitizer/UndefinedBehaviorSanitizer运行通过。
+- 编译器静态栈记录：`app_main`112字节、`refresh`2528字节、USB诊断`task`1728字节、服务`worker`656字节；现有栈预算检查全部通过。这不代表实机最小堆、连续内存或运行时栈已测。公开源文件隐私检查和`git diff --check`通过。
+- 本轮无USB写入或OTA，无真实电池周期、显示/按键/触摸验收、BLE端到端状态读取、睡醒和无线并发内存验收，也未启动或声称完成soak。需要实机分别记录亮屏/息屏/轻睡的消耗，以及低电量至充满的实际时间与估计误差；充电保护暂停、弱供电、供电切换等条件亦待验收。
+
+本机证据：`artifacts/battery-build.log`、`battery-tests.log`、`battery-signature.log`、`battery-image.json`；签名应用位于`build-battery/waveshare-ya.bin`。这些文件不提交、不纳入公开源码包；本分支没有执行对外发布。
+
 ## 0.6.0 息屏唤醒 review 修正（2026-10-30，独立 worktree）
 
 - `fix/screen-wake` 合入 main 的 `feaa726`，保留增量 OTA 实现和双方验收记录，解决文档合并冲突。下方 0.5.1 记录对应原候选，不代表本次 0.6.0 构建。

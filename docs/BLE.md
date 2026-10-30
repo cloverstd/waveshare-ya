@@ -34,6 +34,8 @@ Central API：ble_read(conn,value_handle)、ble_write(conn,value_handle,data,siz
 
 status 增加 sleep_battery（30/60/300秒）、sleep_usb（60/300/600/0秒，0=常亮）、wifi_ssid、wifi_rssi（dBm）、time_valid、rtc_valid、last_time_sync（UTC Unix秒）及 ota_phase、ota_progress、ota_received、ota_total。旧 sleep 读字段为当前供电下生效的超时；旧 sleep 写请求返回 use_sleep_battery_or_sleep_usb，请分别设置两个新键。
 
+电池统计开发分支的管理`status`新增`battery_stats`对象，提供本段/近期耗电或充电速率和预计剩余分钟，未知值为null。字段、阶段与重启/深睡重置边界见[BATTERY_STATS.md](BATTERY_STATS.md)。这只是响应扩展，请求仍保持现有扁平JSON限制。
+
 ota_phase 为 idle/checking/available/current/transferring/verifying/rebooting/boot_verify/complete/failed/rolled_back 之一；进度只表示传输百分比，complete才表示新固件启动验证通过。time_valid=false时不要展示Unix初始时间；rtc_valid=false可能表示联网时间正常但离线保时不可用。
 
 ## 0.3.0 数据服务（硬件待验收）
