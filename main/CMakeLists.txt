@@ -3,6 +3,8 @@ idf_component_register(SRCS "companion.cpp" "logs.cpp" "notifications.cpp" "main
     PRIV_REQUIRES wpa_supplicant
     REQUIRES espressif__zlib espressif__esp_delta_ota nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+target_sources(${COMPONENT_LIB} PRIVATE "font_zh_caption.c" "font_zh_title.c"
+    "font_inter_20.c" "font_inter_24.c" "font_inter_28.c" "font_inter_40.c")
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u ya_firmware_identity")

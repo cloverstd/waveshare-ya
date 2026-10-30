@@ -23,6 +23,8 @@
 
 刷新率是 15/30/60 的目标 UI FPS。静态页面不需要无条件全屏刷新；耗时处理分帧或放到后台。息屏只降低亮度，保留联网，首个唤醒触摸由透明屏障消费。
 
+字体使用 `typography.hpp` 的 body（24px Regular）、caption（20px Regular）、title（28px Medium）和 Inter 数字角色。字体设计单位为2×：10/12/14单位对应20/24/28物理像素；LVGL仍是480×480原生画布，既有坐标不再乘2，不对根容器做缩放。中文Noto Sans SC与英文Inter在构建前合成为4bpp灰度字库，图标继续使用对应尺寸Montserrat回退。按钮高度至少容纳实际字体行高和内边距；窄行用caption，标题单行省略。添加文本后重新生成所有角色，保留两份字体许可。详见[字体与排版](TYPOGRAPHY.md)。
+
 ## TF 卡与相册
 
 官方驱动使用 1-bit SDMMC：CLK GPIO2、CMD GPIO1、D0 GPIO3。挂载到 `/sdcard`，使用 FATFS，长文件名开启。未使用 GPIO41 作为 SPI CS。无硬件 CD 信号，UI 提供显式挂载/安全卸载。

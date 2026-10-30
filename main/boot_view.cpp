@@ -1,4 +1,5 @@
 #include "boot_view.hpp"
+#include "typography.hpp"
 
 namespace ya {
 lv_obj_t *boot_view_create(lv_obj_t *screen, const lv_font_t *font) {
@@ -26,7 +27,7 @@ lv_obj_t *boot_view_create(lv_obj_t *screen, const lv_font_t *font) {
 
   auto *brand = lv_label_create(root);
   lv_label_set_text(brand, "YA");
-  lv_obj_set_style_text_font(brand, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(brand, typography::brand, 0);
   lv_obj_set_style_text_color(brand, lv_color_hex(0xe5ebf2), 0);
   lv_obj_align(brand, LV_ALIGN_CENTER, 0, -24);
 

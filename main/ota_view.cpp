@@ -1,15 +1,15 @@
 #include "ota_view.hpp"
 #include "ui_policy.hpp"
+#include "typography.hpp"
 #include <algorithm>
 #include <cstring>
 
-extern "C" const lv_font_t font_zh;
 namespace ya {
 namespace {
 constexpr uint32_t ink = 0xe5ebf2, muted = 0x96a7b8, mint = 0x79d5c8;
 void base(lv_obj_t *o) {
   lv_obj_remove_style_all(o);
-  lv_obj_set_style_text_font(o, &font_zh, 0);
+  lv_obj_set_style_text_font(o, typography::body, 0);
   lv_obj_set_style_text_color(o, lv_color_hex(ink), 0);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
 }
@@ -43,7 +43,8 @@ lv_obj_t *group(lv_obj_t *parent, bool row, int height = LV_SIZE_CONTENT) {
 lv_obj_t *button(lv_obj_t *parent, const char *value, lv_event_cb_t cb) {
   auto *o = lv_button_create(parent); base(o);
   lv_obj_set_width(o, 0);
-  lv_obj_set_height(o, 46);
+  lv_obj_set_height(o, 48);
+  lv_obj_set_style_text_font(o, typography::title, 0);
   lv_obj_set_flex_grow(o, 1);
   lv_obj_set_style_radius(o, 14, 0);
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
@@ -58,13 +59,13 @@ lv_obj_t *button(lv_obj_t *parent, const char *value, lv_event_cb_t cb) {
 }
 lv_obj_t *choice(lv_obj_t *parent, const char *value, lv_event_cb_t cb, lv_obj_t **size) {
   auto *o = button(parent, value, cb);
-  lv_obj_set_height(o, 68);
+  lv_obj_set_height(o, 76);
   lv_obj_set_style_border_width(o, 1, 0);
   lv_obj_set_style_border_color(o, lv_color_hex(0x2b394a), 0);
   auto *title = lv_obj_get_child(o, 0);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
   *size = label(o, "--", muted);
-  lv_obj_set_style_text_font(*size, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(*size, typography::number_small, 0);
   lv_obj_set_style_text_align(*size, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(*size, LV_ALIGN_BOTTOM_MID, 0, -7);
   return o;
@@ -82,12 +83,13 @@ OtaView ota_view_create(lv_obj_t *parent, const char *version, const OtaViewActi
   lv_obj_set_style_pad_row(v.root, 6, 0);
   auto *identity = group(v.root, true, 34);
   auto *current = label(identity, version, mint);
+  lv_obj_set_style_text_font(current, typography::number_small, 0);
   lv_obj_set_width(current, 96);
   lv_label_set_long_mode(current, LV_LABEL_LONG_DOT);
   v.source = label(identity, "", muted);
   lv_obj_set_width(v.source, 0);
   lv_obj_set_flex_grow(v.source, 1);
-  lv_obj_set_style_text_font(v.source, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(v.source, typography::caption, 0);
   lv_label_set_long_mode(v.source, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lv_obj_set_style_anim_duration(v.source, lv_anim_speed(32), 0);
 
@@ -97,21 +99,24 @@ OtaView ota_view_create(lv_obj_t *parent, const char *version, const OtaViewActi
   lv_obj_set_style_radius(v.hero, 18, 0);
   lv_obj_set_style_pad_all(v.hero, 12, 0);
   lv_obj_set_style_pad_row(v.hero, 6, 0);
-  auto *heading = group(v.hero, true, 28);
+  auto *heading = group(v.hero, true, lv_font_get_line_height(typography::title));
   v.phase = label(heading, "准备就绪", mint);
+  lv_obj_set_style_text_font(v.phase, typography::title, 0);
   lv_obj_set_width(v.phase, 0);
   lv_obj_set_flex_grow(v.phase, 1);
   v.version = label(heading, "", mint);
+  lv_obj_set_style_text_font(v.version, typography::number_small, 0);
   lv_obj_set_width(v.version, 116);
   lv_obj_set_style_text_align(v.version, LV_TEXT_ALIGN_RIGHT, 0);
   lv_label_set_long_mode(v.version, LV_LABEL_LONG_DOT);
   v.percent = label(heading, "", mint);
   lv_obj_set_width(v.percent, 68);
-  lv_obj_set_style_text_font(v.percent, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(v.percent, typography::number_small, 0);
   lv_obj_set_style_text_align(v.percent, LV_TEXT_ALIGN_RIGHT, 0);
   visible(v.percent, false);
   visible(v.version, false);
   v.note = label(v.hero, "正在获取更新信息", muted);
+  lv_obj_set_style_text_font(v.note, typography::caption, 0);
   v.transfer = group(v.hero, false);
   lv_obj_set_style_pad_row(v.transfer, 6, 0);
   v.bar = lv_bar_create(v.transfer);
@@ -123,15 +128,17 @@ OtaView ota_view_create(lv_obj_t *parent, const char *version, const OtaViewActi
   lv_obj_set_style_radius(v.bar, 4, LV_PART_INDICATOR);
   v.bytes = label(v.transfer, "", ink);
   v.written = label(v.transfer, "", muted);
+  lv_obj_set_style_text_font(v.written, typography::caption, 0);
   visible(v.transfer, false);
 
-  v.choices = group(v.root, true, 68);
+  v.choices = group(v.root, true, 76);
   v.delta = choice(v.choices, "增量更新", actions.delta, &v.delta_size);
   v.full = choice(v.choices, "全量更新", actions.full, &v.full_size);
   v.hint = label(v.root, "", muted);
+  lv_obj_set_style_text_font(v.hint, typography::caption, 0);
   visible(v.choices, false);
   visible(v.hint, false);
-  auto *commands = group(v.root, true, 46);
+  auto *commands = group(v.root, true, 48);
   v.check = button(commands, "重新检查", actions.check);
   v.install = button(commands, "安装新版本", actions.install);
   lv_obj_set_style_bg_color(v.install, lv_color_hex(mint), 0);

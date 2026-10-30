@@ -12,7 +12,7 @@
 
 首次构建前以 `python -m espsecure generate_signing_key --version 2 private/keys/ota-signing.pem` 创建 RSA-3072 密钥，目录权限 0700，文件 0600。密钥丢失会导致现有设备不能接受后续签名 OTA，必须通过 USB 重新建立信任。不要每次构建重新生成密钥。
 
-中文字体基于 Noto Sans SC，许可见 FONT-LICENSE.txt。使用 lv_font_conv 1.5.3 和 `tools/fonts.py` 从界面源码提取中文字符。添加界面文字后重新生成；任意中文文件名/SSID 超出已包含字符集时需要扩充字体，不能据当前子集承诺完整 CJK 支持。
+中文字体基于 Noto Sans SC，英文和数字使用 Inter 4.1，许可分别见 FONT-LICENSE.txt 和 INTER-LICENSE.txt。使用 lv_font_conv 1.5.3 和 `tools/fonts.py` 从 main、examples 的实现与头文件提取中文字符。字重/字号、2×单位、来源校验与再生方法见 [字体与排版](TYPOGRAPHY.md)。添加界面文字后重新生成；任意中文文件名/SSID 超出已包含字符集时需要扩充字体，不能据当前子集承诺完整 CJK 支持。
 
 ## 首次刷写
 
@@ -44,7 +44,7 @@ python -m esptool --chip esp32s3 --port PORT write_flash 0 private/backups/origi
 
 电池统计开发分支在页面2显示耗电统计与充放电剩余时间，USB/BLE `status`包含`battery_stats`；算法、采样和重启/深睡重置边界见[BATTERY_STATS.md](BATTERY_STATS.md)。
 
-可使用 `tools/bootstrap.sh` 完成项目内环境准备；已有 SDK 或签名密钥不会被覆盖。需要重新生成字体时使用 `tools/bootstrap.sh --fonts`，中文字体固定 weight=450、22px。
+可使用 `tools/bootstrap.sh` 完成项目内环境准备；已有 SDK 或签名密钥不会被覆盖。首次准备字体使用 `tools/bootstrap.sh --fonts`，仅安装字体工具、下载并校验固定来源、生成字体，不初始化SDK或创建签名密钥。之后可离线执行 `.tools/venv/bin/python tools/fonts.py`。三档中文为20/24px Regular及28px Medium，英文数字按对应尺寸原生栅格化。
 
 首次转换分区的可复用入口为 `tools/first_flash.py --port PORT --backup BACKUP --backup-sha256 SHA256`。它拒绝校验失败的备份和 test 版本，校验签名后才刷写。该工具会重置应用配置，只用于首次安装；正常迭代必须使用 OTA。
 
