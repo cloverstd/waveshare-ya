@@ -1,0 +1,13 @@
+menu "YA development diagnostics"
+config YA_OTA_TEST_FAILURE
+    int "OTA pending-boot fault injection (0=off, 1=abort, 2=watchdog)"
+    range 0 2
+    default 0
+    help
+        Development builds only. Never enable in distributed firmware.
+config YA_TEST_HTTPS_CA
+    bool "Trust local HTTPS test fixture CA"
+    default n
+    help
+        Embeds private/test-ca.crt into test firmware only. Release builds must disable.
+endmenu

@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "waveshare-ya-update",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern": "ya.cloverstd.com", "custom_domain": true}],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/firmware/*"]
+  },
+  "observability": {"enabled": true, "head_sampling_rate": 0.1}
+}

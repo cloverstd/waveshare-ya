@@ -1,0 +1,7 @@
+idf-component-manager==2.5.2
+pytest==9.2.0
+requests==2.34.2
+PyYAML==6.0.3
+pillow==13.0.0
+bleak==3.0.2
+fonttools==4.68.0
