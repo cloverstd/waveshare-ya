@@ -115,3 +115,70 @@ test.each([511,513])('aborts a stream whose actual length is %s',async size => {
 test('static paths are delegated to the asset binding',async () => {
   expect(await (await request('/companion/')).text()).toBe('asset');
 });
+
+const deltaPath='/firmware/waveshare-ya/0.5.1/delta-index.json';
+const patchPath='/firmware/waveshare-ya/0.5.1/waveshare-ya-0.5.0-to-0.5.1.patch';
+async function deltaFixture() {
+  const index={schema:1,product:fixture.product,board:fixture.board,layout:fixture.layout,
+    version:fixture.version,size:fixture.size,sha256:fixture.sha256,patches:[{
+      format:'detools-heatshrink-v1',base_version:'0.5.0',base_size:512,base_sha256:'b'.repeat(64),
+      url:host+patchPath,size:100,sha256:'c'.repeat(64)}]};
+  const raw=JSON.stringify(index)+'\n';
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw))),
+    b=>b.toString(16).padStart(2,'0')).join('');
+  const m={...fixture,delta_index_url:host+deltaPath,delta_index_sha256:digest};
+  return {index,raw,m};
+}
+beforeEach(async()=>{
+  for(const p of [deltaPath,patchPath]) await caches.default.delete(host+p);
+});
+test('legacy manifest stays flat with optional delta pointers',async()=>{
+  const {m}=await deltaFixture();
+  mock(new Response(JSON.stringify(m)));
+  expect(await (await request()).json()).toEqual(m);
+});
+test('delta index retains exact hashed bytes',async()=>{
+  const {m,raw}=await deltaFixture();
+  mock(new Response(JSON.stringify(m)),new Response(raw));
+  const response=await request(deltaPath);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('Content-Length')).toBe(String(new TextEncoder().encode(raw).length));
+  expect(await response.text()).toBe(raw);
+});
+test('patch cold and warm downloads retain length and bytes',async()=>{
+  const {m,raw}=await deltaFixture(); const bytes=new Uint8Array(100).fill(0x55);
+  const fetch=mock(new Response(JSON.stringify(m)),new Response(raw),new Response(bytes,{headers:{'Content-Length':'100'}}));
+  const response=await request(patchPath);
+  expect(response.status).toBe(200);expect(response.headers.get('Content-Length')).toBe('100');
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  await waitOnExecutionContext(contexts[0]);
+  expect(new Uint8Array(await (await request(patchPath)).arrayBuffer())).toEqual(bytes);
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+test('missing delta index leaves full manifest usable',async()=>{
+  mock(manifest(),manifest());expect((await request(deltaPath)).status).toBe(404);
+  expect((await request()).status).toBe(200);
+});
+test('tampered delta index is rejected',async()=>{
+  const {m,raw}=await deltaFixture();
+  mock(new Response(JSON.stringify(m)),new Response(raw+' '));
+  expect((await request(deltaPath)).status).toBe(503);
+});
+test('patches not in index cannot be downloaded',async()=>{
+  const {m,raw}=await deltaFixture();
+  mock(new Response(JSON.stringify(m)),new Response(raw));
+  expect((await request(patchPath.replace('0.5.0-to','0.4.0-to'))).status).toBe(404);
+});
+test('wrong patch Content-Length is rejected',async()=>{
+  const {m,raw}=await deltaFixture();
+  mock(new Response(JSON.stringify(m)),new Response(raw),new Response(new Uint8Array(100),{headers:{'Content-Length':'101'}}));
+  expect((await request(patchPath)).status).toBe(503);
+});
+test('valid hash cannot hide an invalid target or duplicate index keys',async()=>{
+  const {validateDeltaIndex}=await import('../src/index');
+  const {raw,m,index}=await deltaFixture();
+  expect(()=>validateDeltaIndex(raw,m)).not.toThrow();
+  expect(()=>validateDeltaIndex(raw.replace('"schema":1','"schema":1,"schema":1'),m)).toThrow();
+  expect(()=>validateDeltaIndex(JSON.stringify({...index,sha256:'e'.repeat(64)}),m)).toThrow();
+  expect(()=>validateDeltaIndex(JSON.stringify({...index,patches:[...index.patches,...index.patches]}),m)).toThrow();
+});

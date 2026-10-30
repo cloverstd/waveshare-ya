@@ -8,6 +8,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("source,symbol,budget", [
     ("main.cpp", "void app_main()", 512),
     ("ota.cpp", "void ya::ota_boot_check()", 1024),
+    ("ota.cpp", "void ya::check_task(void*)", 8192),
+    ("ota.cpp", "void ya::install_task(void*)", 8192),
     ("diagnostics.cpp", "void ya::task(void*)", 2048),
     ("ui.cpp", "void ya::refresh(lv_timer_t*)", 4096),
     ("ui.cpp", "void ya::wifi_detail(uint32_t)", 1024),

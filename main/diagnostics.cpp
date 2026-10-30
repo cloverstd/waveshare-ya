@@ -13,6 +13,7 @@
 #include "bsp/esp-bsp.h"
 #include "esp_lv_adapter.h"
 #include "ya.hpp"
+#include "ota_contract.hpp"
 #include "identity.hpp"
 #include <fcntl.h>
 #include <string>
@@ -217,6 +218,15 @@ static void task(void *) {
         cJSON_AddStringToObject(out, "ota", s.ota_note);
         cJSON_AddBoolToObject(out, "pending", s.pending);
         cJSON_AddNumberToObject(out, "ota_progress", s.ota_progress);
+        cJSON_AddStringToObject(out, "ota_phase", ota_phase_name(s.ota_phase));
+        cJSON_AddStringToObject(out, "ota_mode", s.ota_mode==OtaMode::DELTA ? "delta" : "full");
+        cJSON_AddNumberToObject(out, "ota_received", s.ota_received);
+        cJSON_AddNumberToObject(out, "ota_total", s.ota_total);
+        cJSON_AddNumberToObject(out, "ota_written", s.ota_written);
+        cJSON_AddBoolToObject(out, "delta_available", s.ota_delta_available);
+        cJSON_AddNumberToObject(out, "full_size", s.ota_full_size);
+        cJSON_AddNumberToObject(out, "delta_size", s.ota_delta_size);
+        cJSON_AddStringToObject(out, "target_sha256", s.ota_sha);
         cJSON_AddBoolToObject(out, "battery_valid", s.battery.valid);
         cJSON_AddNumberToObject(out, "battery", s.battery.percent);
         cJSON_AddNumberToObject(out, "battery_mv", s.battery.millivolts);
@@ -451,9 +461,17 @@ static void task(void *) {
         ok = cJSON_IsString(u) && set_update_url(u->valuestring) == ESP_OK;
       } else if (!strcmp(name, "check"))
         ok = command(Op::OTA_CHECK);
-      else if (!strcmp(name, "install"))
-        ok = command(Op::OTA_INSTALL);
-      else if (!strcmp(name, "reboot"))
+      else if (!strcmp(name, "install")) {
+        auto *mode=cJSON_GetObjectItemCaseSensitive(j,"mode");
+        auto *sha=cJSON_GetObjectItemCaseSensitive(j,"sha256");
+        bool valid=!mode || (cJSON_IsString(mode) &&
+            (!strcmp(mode->valuestring,"full") || !strcmp(mode->valuestring,"delta")));
+        char target[65];
+        { Guard g(state_mutex); strlcpy(target,state.ota_sha,sizeof(target)); }
+        if (sha) valid=valid && cJSON_IsString(sha) && ota_contract::digest(sha->valuestring);
+        if (valid) ok=command(Op::OTA_INSTALL,"",sha ? sha->valuestring : target,
+            mode && !strcmp(mode->valuestring,"delta") ? (int)OtaMode::DELTA : (int)OtaMode::FULL);
+      } else if (!strcmp(name, "reboot"))
         ok = command(Op::REBOOT);
       else if (!strcmp(name, "audio"))
         ok = command(Op::AUDIO_TEST);

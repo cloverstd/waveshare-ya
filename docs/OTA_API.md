@@ -164,3 +164,36 @@ wc -c /tmp/ya-firmware.bin
 正式服务实现于仓库 `worker/`。Tag `vX.Y.Z` 与固件内 `X.Y.Z`、清单版本一致。Worker 从公开仓库最新正式 Release 的 `manifest.json` 取得清单，内部最多缓存60秒；客户端仍收到 `no-store`。版本化下载从对应 Tag 的附件代理，GitHub 跳转只在 Worker 内部处理。固件经固定长度流输出，保持原字节和准确长度。未发布返回404，上游故障返回503；不缓存错误，也不提供任意 URL 代理。
 
 站点首页及 `/companion/` 同属该 Worker。部署和 Secret 配置见 [RELEASE.md](RELEASE.md)。GitHub Actions 正式构建使用既有签名私钥的加密 Secret；服务器运行时不持有签名私钥。
+
+## 0.6.0 增量索引与补丁
+
+v1全量清单保留原有扁平结构，可增加两个同时存在的字符串：`delta_index_url`（HTTPS直达URL，最多383字节）和`delta_index_sha256`（对索引原始UTF-8字节计算的64位小写SHA256）。旧固件忽略额外平面字段。新固件获取索引失败、索引无匹配补丁或校验失败时，保留全量选项；不要把补丁数组直接放入v1清单。
+
+默认索引路径：`/firmware/waveshare-ya/{version}/delta-index.json`。HTTP要求与全量清单相同，版本化索引可immutable缓存，正文1–4095字节：
+
+```json
+{
+  "schema": 1,
+  "product": "waveshare-ya",
+  "board": "esp32-s3-touch-amoled-2.16",
+  "layout": "ab6-v1",
+  "version": "0.6.0",
+  "size": 2300000,
+  "sha256": "<完整目标签名镜像的SHA256>",
+  "patches": [{
+    "format": "detools-heatshrink-v1",
+    "base_version": "0.5.1",
+    "base_size": 2232320,
+    "base_sha256": "<完整基线签名镜像的SHA256>",
+    "url": "https://ya.cloverstd.com/firmware/waveshare-ya/0.6.0/waveshare-ya-0.5.1-to-0.6.0.patch",
+    "size": 100000,
+    "sha256": "<原始补丁文件的SHA256>"
+  }]
+}
+```
+
+此例仅展示字段，大小/摘要均为占位，必须由工具生成。目标身份、长度与SHA须和全量清单一致；`patches`为0–3条记录，基线版本不得重复；base_size为512–6291456整数，补丁size为正整数且小于全量size，所有摘要为64位小写十六进制。拒绝重复键、NUL和不支持的格式；解析前限制嵌套深度。基线匹配同时要求版本、完整长度及摘要。
+
+补丁路径为`/firmware/waveshare-ya/{target}/waveshare-ya-{base}-to-{target}.patch`，媒体类型`application/octet-stream`、精确Content-Length、identity编码，不重定向或chunked。Worker只代理对应Release索引明确列出的补丁，校验索引原字节摘要；补丁由设备校验下载摘要，最终仍验证重建应用的既有RSA签名。服务器不需要持有私钥。
+
+设备`GET /api/status`新增`mode`（full/delta）和`written`（完整应用累计写入字节）。原`received/total/progress`表示所选下载包；增量失败不会自动切换为全量下载。
