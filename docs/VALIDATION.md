@@ -1,5 +1,15 @@
 # 验收记录
 
+## 0.5.1 Actions正式发布与线上验证（2026-10-30）
+
+- 源提交 `1a319ce89e799d6ee86392655cd4c082c8199e8f`，Tag `v0.5.1`。主分支完整检查[40989901697](https://github.com/cloverstd/waveshare-ya/actions/runs/40989901697)成功；正式Tag的web、firmware和publish全部成功，见[40990407586](https://github.com/cloverstd/waveshare-ya/actions/runs/40990407586)。正式Release及附件已由GitHub标记immutable，不替换该版本内容。
+- [v0.5.1 Release](https://github.com/cloverstd/waveshare-ya/releases/tag/v0.5.1)：CI签名应用2,232,320字节，SHA-256 `0a3c3e3d4cbea1ca7c7cf9715634a65408c65f44e02cedb7d63322ba5c0c793a`。全部附件下载后校验SHA256SUMS、镜像版本、既有RSA公钥通过，公开源码和压缩包脱敏检查通过。`release-info.json`记录commit和Actions来源。CI哈希与下方本机构建哈希不同，正式在线源以CI附件为准。
+- 用户配置Cloudflare Secrets后，网站部署[40989901694](https://github.com/cloverstd/waveshare-ya/actions/runs/40989901694)重跑成功；Worker版本 `08f70ee1-b4a3-41c3-9b35-2be453b27c7b`，绑定 `ya.cloverstd.com`。正式首页及`/companion/`返回200，本地首页、数据站及JS资源也验证200；浏览器视觉验收仍受下方工具限制。
+- 正式域名清单及两次固件下载的HTTP/1.1检查通过：清单200、长度准确且小于4096字节；固件200、Content-Length=2232320、application/octet-stream、Content-Encoding=identity，无Location或Transfer-Encoding，重复下载SHA256与CI一致。通过既有公钥验证从Workers下载的实际应用签名。
+- 固件默认`ESP32 HTTP Client/1.0`请求头下载校验通过。Cloudflare对Python默认urllib请求头返回1010/403，而curl及固件请求头按合同返回；本轮没有修改域名安全规则。`tools/check_update.py`使用curl执行线上检查。
+- 尚未刷入实机，因此此项只证明构建发布与HTTPS传输链路，不证明设备重启、启动确认、回退、电池联网及实体界面已通过。保留现有设备、配置和槽位。
+
+
 ## 0.5.1 Workers更新网站与自动发布（2026-10-30）
 
 - 新增Workers网站、蓝牙数据站托管、固定仓库的Release下载代理、Tag绑定的Actions签名发布。固定IDF 5.5.5 / BSP 2.0.1 / LVGL 9.3.0及依赖哈希，保留ab6-v1与既有RSA信任，不修改eFuse或设备配置。
