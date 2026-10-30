@@ -4,7 +4,7 @@ idf_component_register(SRCS "companion.cpp" "logs.cpp" "notifications.cpp" "main
     REQUIRES espressif__zlib espressif__esp_delta_ota nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 target_sources(${COMPONENT_LIB} PRIVATE "font_zh_caption.c" "font_zh_title.c"
-    "font_inter_20.c" "font_inter_24.c" "font_inter_28.c" "font_inter_40.c")
+    "font_inter_20.c" "font_inter_24.c" "font_inter_28.c" "font_inter_40.c" "status_view.cpp")
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u ya_firmware_identity")
@@ -29,6 +29,7 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -fstack-usage)
 # component for speed without changing the system/driver optimization or RAM buffers.
 idf_component_get_property(ya_lvgl_lib lvgl__lvgl COMPONENT_LIB)
 target_compile_options(${ya_lvgl_lib} PRIVATE -O2)
+include("${CMAKE_CURRENT_SOURCE_DIR}/spiffs_compat.cmake")
 
 if(NOT CONFIG_PM_ENABLE OR NOT CONFIG_FREERTOS_USE_TICKLESS_IDLE)
   message(FATAL_ERROR "YA 0.3 requires PM and Tickless Idle. Use tools/build_release.sh 0.3.0 or a fresh SDKCONFIG; see docs/COMPANION.md")

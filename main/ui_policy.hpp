@@ -1,7 +1,15 @@
 #pragma once
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 namespace ya::ui_policy {
+inline void url_base(char *out, size_t capacity, const char *url) {
+  if (!capacity) return;
+  const char *authority = std::strstr(url, "://");
+  if (!authority) { out[0] = 0; return; }
+  const size_t end = (authority + 3 - url) + std::strcspn(authority + 3, "/?#");
+  std::snprintf(out, capacity, "%.*s", int(end), url);
+}
 inline void format_bytes(char *out, size_t capacity, uint64_t bytes) {
   static constexpr const char *units[] = {"B", "KB", "MB", "GB", "TB", "PB", "EB"};
   double value = bytes;

@@ -3,6 +3,18 @@
 #include <initializer_list>
 #include <cstring>
 int main() {
+  char url[384];
+  using ya::ui_policy::url_base;
+  url_base(url, sizeof url, "https://ya.cloverstd.com/api/v1/ota/manifest.json");
+  assert(!strcmp(url, "https://ya.cloverstd.com"));
+  url_base(url, sizeof url, "http://host.local:8765/path?q=x#frag");
+  assert(!strcmp(url, "http://host.local:8765"));
+  url_base(url, sizeof url, "https://[::1]:443?q=x");
+  assert(!strcmp(url, "https://[::1]:443"));
+  url_base(url, sizeof url, "https://example.com");
+  assert(!strcmp(url, "https://example.com"));
+  url_base(url, 4, "https://example.com/path"); assert(!strcmp(url, "htt"));
+  url_base(url, 0, "https://example.com/path"); assert(!strcmp(url, "htt"));
   using ya::ui_policy::format_bytes;
   char size[32];
   format_bytes(size, sizeof size, 0); assert(!strcmp(size, "0 B"));

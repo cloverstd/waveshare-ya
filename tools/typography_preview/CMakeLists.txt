@@ -9,6 +9,6 @@ set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${YA_ROOT}/managed_components/lvgl__lvgl" lvgl)
 file(GLOB YA_FONTS "${YA_ROOT}/main/font_*.c")
 add_executable(typography_preview preview.cpp ${YA_FONTS}
-    "${YA_ROOT}/main/boot_view.cpp" "${YA_ROOT}/main/ota_view.cpp")
+    "${YA_ROOT}/main/boot_view.cpp" "${YA_ROOT}/main/ota_view.cpp" "${YA_ROOT}/main/status_view.cpp")
 target_include_directories(typography_preview PRIVATE "${YA_ROOT}/main")
 target_link_libraries(typography_preview PRIVATE lvgl)

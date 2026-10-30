@@ -155,7 +155,9 @@ OtaView ota_view_create(lv_obj_t *parent, const char *version, const OtaViewActi
 }
 
 void ota_view_update(OtaView &v, const OtaViewData &s) {
-  text(v.source, s.source);
+  char base_url[384];
+  ui_policy::url_base(base_url, sizeof base_url, s.source);
+  text(v.source, base_url);
   text(v.phase, s.phase);
   text(v.note, s.note);
   visible(v.note, s.note[0] && strcmp(s.note, s.phase));

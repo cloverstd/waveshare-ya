@@ -1,6 +1,7 @@
 #include "notifications.hpp"
 #include "logs.hpp"
 #include "companion.hpp"
+#include "status_view.hpp"
 #include "esp_err.h"
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
@@ -41,8 +42,7 @@ static uint32_t brightness_request = 0;
 static bool keep_awake = false, last_usb = false;
 static int64_t seen_notice_expires = 0;
 static lv_obj_t *notice_badge = nullptr, *notice_list = nullptr, *clear_button = nullptr;
-static lv_obj_t *sys_values[8]{}, *sys_bars[4]{}, *battery_arc = nullptr;
-static lv_obj_t *battery_eta = nullptr, *battery_usage = nullptr;
+static StatusView status_view{};
 static lv_obj_t *ble_summary = nullptr, *ble_code = nullptr, *ble_pair_button = nullptr;
 static OtaView ota_view{};
 static OtaMode ota_selected=OtaMode::FULL, ota_confirmed=OtaMode::FULL;
@@ -340,10 +340,7 @@ static void clean() {
   detail = list = nullptr;
   notice_badge = notice_list = clear_button = nullptr;
   ble_summary = ble_code = ble_pair_button = nullptr;
-  for (auto &v : sys_values) v = nullptr;
-  for (auto &v : sys_bars) v = nullptr;
-  battery_arc = nullptr; notice_revision = ~0u;
-  battery_eta = battery_usage = nullptr;
+  status_view = {}; notice_revision = ~0u;
   ota_view = {};
   list_count = -1;
   lv_obj_clean(content);
@@ -437,47 +434,7 @@ static lv_obj_t *card(lv_obj_t *p, uint32_t color, int height = LV_SIZE_CONTENT)
   return v;
 }
 void ui_battery(lv_obj_t *p) {
-  auto *hero = card(p, 0x112d28, 168);
-  battery_arc = lv_arc_create(hero);
-  lv_obj_set_size(battery_arc, 130, 130);
-  lv_obj_set_pos(battery_arc, 0, 2);
-  lv_arc_set_range(battery_arc, 0, 100); lv_arc_set_bg_angles(battery_arc, 135, 45);
-  lv_obj_remove_style(battery_arc, nullptr, LV_PART_KNOB);
-  lv_obj_remove_flag(battery_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_color(battery_arc, lv_color_hex(0x25463c), LV_PART_MAIN);
-  lv_obj_set_style_arc_color(battery_arc, lv_color_hex(0x71d7a4), LV_PART_INDICATOR);
-  sys_values[0] = label(hero, "--", 120);
-  lv_obj_set_style_text_font(sys_values[0], typography::number_large, 0);
-  lv_obj_set_style_text_align(sys_values[0], LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_pos(sys_values[0], 5, 40);
-  auto *title = label(hero, "电源与电量", 235); lv_obj_set_pos(title, 156, 5);
-  lv_obj_set_style_text_font(title, typography::title, 0);
-  sys_values[1] = label(hero, "", 235); lv_obj_set_pos(sys_values[1], 156, 48);
-  auto *usage = card(p, 0x182d39); column(usage);
-  heading(usage, "电池使用统计");
-  battery_eta = label(usage, "正在估算");
-  lv_obj_set_style_text_color(battery_eta, accent(), 0);
-  battery_usage = label(usage, "");
-  auto *hint = caption(usage, "估算随使用与充电情况变化");
-  lv_obj_set_style_text_color(hint, lv_color_hex(0x98adbf), 0);
-  auto *row = lv_obj_create(p); plain(row); lv_obj_set_size(row, 432, 120);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(row, 12, 0);
-  for (int i = 0; i < 2; ++i) {
-    auto *v = card(row, i ? 0x202b48 : 0x17343f, 120); lv_obj_set_width(v, 210); column(v);
-    auto *t = label(v, i ? "蓝牙" : "Wi-Fi");
-    lv_obj_set_style_text_color(t, lv_color_hex(i ? 0x9eacff : 0x70d7ed), 0);
-    sys_values[2+i] = caption(v, "", LV_PCT(100));
-    lv_label_set_long_mode(sys_values[2+i], LV_LABEL_LONG_DOT);
-    lv_obj_set_height(sys_values[2+i], 54);
-  }
-  const char *names[] = {"内部内存", "PSRAM", "内置存储", "TF 卡"};
-  const uint32_t colors[] = {0x70b5ff,0xb59aff,0xffc478,0x71d7a4};
-  for (int i = 0; i < 4; ++i) {
-    auto *v = card(p, 0x151e2b); column(v); label(v, names[i]);
-    sys_values[4+i] = label(v, "");
-    sys_bars[i] = lv_bar_create(v); lv_obj_set_size(sys_bars[i], LV_PCT(100), 10);
-    lv_obj_set_style_bg_color(sys_bars[i], lv_color_hex(colors[i]), LV_PART_INDICATOR);
-  }
+  status_view = status_view_create(p);
   auto *v = card(p, 0x291f35); column(v);
   detail = label(v, "");
   opbutton(p, "重新启动", Op::REBOOT);
@@ -521,74 +478,20 @@ static void notices_refresh() {
   }
   if (v.count) notifications_read(v.entries[v.count-1].id);
 }
-static void duration_text(char *out, size_t size, int64_t minutes) {
-  if (minutes >= 60)
-    snprintf(out, size, "%lld 小时 %lld 分钟", minutes / 60, minutes % 60);
-  else if (minutes > 0)
-    snprintf(out, size, "%lld 分钟", minutes);
-  else
-    snprintf(out, size, "不足 1 分钟");
-}
-static void battery_stats_refresh(const Battery &b) {
-  if (!battery_eta || !battery_usage) return;
-  const auto &s = b.stats;
-  using namespace battery_stats;
-  char text[320], duration[64];
-  if (!b.valid || !b.present || b.percent < 0) {
-    set_text(battery_eta, !b.valid ? "读取失败，暂不可估算" : !b.present ? "未安装电池" : "电量未知，暂不可估算");
-    set_text(battery_usage, "");
-    return;
-  }
-  switch (s.phase) {
-  case Phase::READY:
-    duration_text(duration, sizeof(duration), s.remaining_minutes);
-    snprintf(text, sizeof(text), "%s约 %s", s.mode == Mode::CHARGING ? "预计充满还需" : "预计可用", duration);
-    break;
-  case Phase::FULL: snprintf(text, sizeof(text), "已充满"); break;
-  case Phase::CONFIRMING_FULL: snprintf(text, sizeof(text), "等待充满确认"); break;
-  case Phase::NO_PROGRESS: snprintf(text, sizeof(text), "电量暂无增长，暂不可估算"); break;
-  case Phase::LEARNING: snprintf(text, sizeof(text), "%s：正在估算", s.mode == Mode::CHARGING ? "充满时间" : "剩余可用时间"); break;
-  default: snprintf(text, sizeof(text), "%s", b.usb ? "USB 供电，未在充电" : "暂不可估算"); break;
-  }
-  set_text(battery_eta, text);
-  if (s.mode != Mode::CHARGING && s.mode != Mode::DISCHARGING) {
-    set_text(battery_usage, "开始充放电后重新统计");
-    return;
-  }
-  duration_text(duration, sizeof(duration), s.session_seconds / 60);
-  snprintf(text, sizeof(text), "本段监测 %s\n电量%s %d%%", duration,
-           s.mode == Mode::CHARGING ? "增加" : "消耗", s.change_percent);
-  size_t used = strlen(text);
-  if (s.session_rate >= 0)
-    snprintf(text + used, sizeof(text) - used, " · 平均 %.1f%%/小时", s.session_rate);
-  used = strlen(text);
-  if (s.recent_rate >= 0)
-    snprintf(text + used, sizeof(text) - used, "\n近 %lld 分钟：%.1f%%/小时", s.recent_seconds / 60, s.recent_rate);
-  else
-    snprintf(text + used, sizeof(text) - used, "\n积累电量变化后显示近期速率");
-  set_text(battery_usage, text);
-}
 static void system_refresh(const Status &s) {
-  if (!sys_values[0]) return;
-  char b[240]; bool valid = s.battery.valid && s.battery.present && s.battery.percent >= 0;
-  snprintf(b, sizeof(b), valid ? "%d" : "--", s.battery.percent); set_text(sys_values[0], b);
-  lv_arc_set_value(battery_arc, valid ? s.battery.percent : 0);
-  lv_obj_set_style_arc_color(battery_arc, lv_color_hex(ui_policy::battery_color(valid, s.battery.percent)), LV_PART_INDICATOR);
-  snprintf(b, sizeof(b), "%s\n%s", !s.battery.valid ? "供电未知" : s.battery.usb ? "USB 供电" : "电池供电",
-    !s.battery.valid ? "读取失败" : !s.battery.present ? "未安装电池" : s.battery.charging ? "正在充电" : s.battery.stats.mode == battery_stats::Mode::FULL ? "已充满" : "使用中");
-  set_text(sys_values[1], b);
-  battery_stats_refresh(s.battery);
-  snprintf(b, sizeof(b), "%s\n%s", s.wifi_connected ? "已连接" : s.wifi_busy ? "连接中" : "未连接", s.wifi_connected ? s.wifi_ssid : ""); set_text(sys_values[2], b);
+  if (!status_view.battery) return;
+  char wifi[96], bluetooth[96];
+  snprintf(wifi, sizeof wifi, "%s\n%s", s.wifi_connected ? "已连接" : s.wifi_busy ? "连接中" : "未连接", s.wifi_connected ? s.wifi_ssid : "");
   int peers = 0; for (const auto &p : s.peers) peers += p.connected;
-  snprintf(b, sizeof(b), "%s\n外设 %d 台", s.phone_connected ? "手机 / 电脑在线" : config().ble ? "等待连接" : "已关闭", peers); set_text(sys_values[3], b);
-  uint64_t total[] = {s.ram_total,s.psram_total,s.flash_total,s.sd_total};
-  uint64_t free[] = {s.ram_free,s.psram_free,s.flash_free,s.sd_free};
-  bool available[] = {s.ram_total>0,s.psram_total>0,s.flash_mounted && s.flash_capacity_valid,s.sd_mounted && s.sd_capacity_valid};
-  for (int i=0;i<4;++i) {
-    if (available[i] && total[i]) snprintf(b,sizeof(b),"%.2f / %.2f MB 可用",free[i]/1048576.0,total[i]/1048576.0);
-    else strlcpy(b,i==2 && !s.flash_mounted ? s.flash_note : i==3 && !s.sd_mounted ? "未挂载" : "容量未知",sizeof(b));
-    set_text(sys_values[4+i],b); lv_bar_set_value(sys_bars[i],available[i] && total[i] ? 100-std::min(uint64_t(100),free[i]*100/total[i]) : 0,LV_ANIM_OFF);
-  }
+  snprintf(bluetooth, sizeof bluetooth, "%s\n外设 %d 台", s.phone_connected ? "手机 / 电脑在线" : config().ble ? "等待连接" : "已关闭", peers);
+  status_view_update(status_view, {
+    s.battery.valid, s.battery.present, s.battery.usb, s.battery.charging,
+    s.battery.percent, s.battery.stats,
+    {s.ram_total, s.psram_total, s.flash_total, s.sd_total},
+    {s.ram_free, s.psram_free, s.flash_free, s.sd_free},
+    {s.ram_total > 0, s.psram_total > 0, s.flash_mounted && s.flash_capacity_valid, s.sd_mounted && s.sd_capacity_valid},
+    wifi, bluetooth
+  });
 }
 static void toggle(lv_obj_t *p, const char *title, const char *key, bool on) {
   auto *row = lv_obj_create(p);
