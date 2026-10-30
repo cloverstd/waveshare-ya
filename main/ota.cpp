@@ -4,6 +4,7 @@
 #include "sdkconfig.h"
 #include "identity.hpp"
 #include "ota_contract.hpp"
+#include "ota_web_session.hpp"
 #if CONFIG_YA_TEST_HTTPS_CA || YA_TEST_CA_ENABLE
 #include "../private/test-ca.h"
 #endif
@@ -18,6 +19,7 @@
 #include "esp_delta_ota.h"
 #include "esp_random.h"
 #include "esp_task_wdt.h"
+#include "lwip/sockets.h"
 #include "mbedtls/sha256.h"
 #include "ya.hpp"
 #include <algorithm>
@@ -25,11 +27,18 @@
 #include <strings.h>
 namespace ya {
 static httpd_handle_t server;
+static bool web_routes_ready = false;
+enum class JobKind { CHECK, INSTALL, WEB_OPEN, WEB_UPLOAD };
+struct Job {
+  JobKind kind;
+  httpd_req_t *request = nullptr;
+};
 static QueueHandle_t jobs;
 static void worker(void *);
 static SemaphoreHandle_t ota_mutex;
-static char token[33]{};
-static int64_t expires = 0;
+static ota_web::Session web_session;
+static std::atomic<bool> web_running{false}, web_open_requested{false};
+static std::atomic<uint32_t> web_stack_min{0}, worker_stack_min{0};
 static std::atomic<bool> checking{false}, recheck_requested{false};
 using ota_contract::https_url;
 using ota_contract::Release;
@@ -104,17 +113,21 @@ static void status(OtaPhase phase, const char *s, int p = -1, bool reset = false
     notifications_add(s, NoticeKind::OTA);
   publish(OTA);
 }
-static bool acquire() {
-  Guard mutation(mutation_mutex);
-  Guard l(ota_mutex);
-  Guard g(state_mutex);
+// Caller holds mutation_mutex -> ota_mutex -> state_mutex.
+static bool acquire_locked() {
   const auto &b = state.battery;
-  if (ota_busy || checking || state.pending || state.wifi_busy ||
+  if (ota_busy || checking || web_session.uploading() || state.pending || state.wifi_busy ||
       !update_power_allowed(b.valid, now_ms() - b.sampled < 5000, b.usb, b.present, b.percent))
     return false;
   ota_busy = true;
   state.ota_active = true;
   return true;
+}
+static bool acquire() {
+  Guard mutation(mutation_mutex);
+  Guard l(ota_mutex);
+  Guard g(state_mutex);
+  return acquire_locked();
 }
 static void fail(const char *s) {
   status(OtaPhase::FAILED, s);
@@ -135,17 +148,23 @@ static const char *write_error(esp_err_t error) {
     return "固件签名或镜像校验失败，保留原固件";
   return "固件写入或升级配置失败，保留原固件";
 }
-static bool auth(httpd_req_t *req) {
+static bool auth_locked(httpd_req_t *req, int64_t now) {
   char h[80]{};
   if (httpd_req_get_hdr_value_str(req, "Authorization", h, sizeof(h)) != ESP_OK)
     return false;
+  return web_session.authorized(h, now);
+}
+static bool auth(httpd_req_t *req) {
   Guard l(ota_mutex);
-  if (!token[0] || now_ms() >= expires || strlen(h) != 39 || strncmp(h, "Bearer ", 7))
-    return false;
-  unsigned diff = 0;
-  for (int i = 0; i < 32; i++)
-    diff |= (h[i + 7] ^ token[i]);
-  return diff == 0;
+  return auth_locked(req, now_ms());
+}
+struct WebStackSample {
+  ~WebStackSample() { web_stack_min = uxTaskGetStackHighWaterMark(nullptr); }
+};
+OtaWebStatus ota_web_status() {
+  Guard l(ota_mutex);
+  return {web_running.load(), web_session.valid(now_ms()), web_session.uploading(),
+          web_stack_min.load(), worker_stack_min.load()};
 }
 static esp_err_t error(httpd_req_t *r, const char *code, const char *msg, size_t remaining = 0) {
   // Drain a bounded rejected body before closing, otherwise TCP RST can discard the HTTP error.
@@ -166,6 +185,7 @@ static esp_err_t error(httpd_req_t *r, const char *code, const char *msg, size_t
 static const char *page =
     R"HTML(<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>YA 固件升级</title><style>body{background:#080b10;color:#eee;font:18px system-ui;max-width:600px;margin:50px auto;padding:24px}button,input{font:inherit;margin:12px 0;padding:12px}progress{width:100%}small{color:#aaa}</style><h1>YA 固件升级</h1><p>选择本设备的签名 OTA .bin 文件。</p><input type="file" id="f" accept=".bin"><br><button id="b">上传并升级</button><progress id="p" max="100" value="0"></progress><p id="s">请从设备设置页打开此地址（含访问凭证）。</p><small>上传中请保持供电。启动验证失败时设备自动回退。</small><script>const t=location.hash.slice(1);history.replaceState(null,'',location.pathname);b.onclick=()=>{if(!f.files[0]||!t)return;s.textContent='正在上传';p.value=0;b.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/ota');x.setRequestHeader('Authorization','Bearer '+t);x.setRequestHeader('Content-Type','application/octet-stream');x.upload.onprogress=e=>{if(e.lengthComputable){p.value=e.loaded/e.total*100;s.textContent='正在上传 '+Math.floor(p.value)+'%'}};x.upload.onload=()=>{s.textContent='传输完成，设备正在校验签名和升级配置'};x.onload=()=>{s.textContent=x.responseText;b.disabled=false};x.onerror=()=>{s.textContent='连接中断，请检查设备上的升级结果';b.disabled=false};x.send(f.files[0]);};</script>)HTML";
 static esp_err_t root(httpd_req_t *r) {
+  WebStackSample stack_sample;
   httpd_resp_set_type(r, "text/html; charset=utf-8");
   httpd_resp_set_hdr(r, "Cache-Control", "no-store");
   return httpd_resp_sendstr(r, page);
@@ -303,18 +323,8 @@ public:
     return e;
   }
 };
-static void reboot_task(void *) {
-  vTaskDelay(pdMS_TO_TICKS(1500));
-  notifications_checkpoint();
-  esp_restart();
-}
-static esp_err_t upload(httpd_req_t *r) {
-  if (!auth(r))
-    return error(r, "403 Forbidden", "访问凭证无效或已过期", r->content_len);
-  if (r->content_len < 512 || r->content_len > OTA_MAX)
-    return error(r, "413 Payload Too Large", "固件大小无效", r->content_len);
-  if (!acquire())
-    return error(r, "409 Conflict", "正在升级、等待验证或电量不足", r->content_len);
+// Runs only on the preallocated internal-RAM OTA worker stack.
+static esp_err_t receive_upload(httpd_req_t *r, bool &installed) {
   { Guard g(state_mutex); state.ota_mode=OtaMode::FULL; }
   Writer w(r->content_len);
   char b[4096];
@@ -349,62 +359,142 @@ static esp_err_t upload(httpd_req_t *r) {
     return error(r, "400 Bad Request", "固件校验失败或上传中断，原固件仍可使用", left);
   }
   status(OtaPhase::REBOOTING, "校验成功，即将重启", 100);
+  installed = true; // Reboot even if the client loses the success response.
   httpd_resp_set_type(r, "text/plain; charset=utf-8");
-  httpd_resp_sendstr(r, "上传成功，设备正在重启并验证；请查看屏幕上的最终结果。");
-  if (xTaskCreate(reboot_task, "ota_reboot", 2048, nullptr, 5, nullptr) != pdPASS) {
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    notifications_checkpoint();
-  esp_restart();
+  return httpd_resp_sendstr(r, "上传成功，设备正在重启并验证；请查看屏幕上的最终结果。");
+}
+static esp_err_t upload(httpd_req_t *r) {
+  WebStackSample stack_sample;
+  const char *code = nullptr, *message = nullptr;
+  {
+    Guard mutation(mutation_mutex);
+    Guard l(ota_mutex);
+    Guard g(state_mutex);
+    const auto admitted_at = now_ms();
+    if (!auth_locked(r, admitted_at)) {
+      code = "403 Forbidden"; message = "访问凭证无效或已过期";
+    } else if (r->content_len < 512 || r->content_len > OTA_MAX) {
+      code = "413 Payload Too Large"; message = "固件大小无效";
+    } else if (!acquire_locked()) {
+      code = "409 Conflict"; message = "正在升级、等待验证或电量不足";
+    } else {
+      // Serialized with expiry/stop; pin the server before copying the request.
+      // Use the same admission instant as authorization, including the boundary.
+      const bool pinned = web_session.begin_upload(admitted_at);
+      configASSERT(pinned);
+    }
   }
-  return ESP_OK;
+  if (code)
+    return error(r, code, message, r->content_len);
+  httpd_req_t *copy = nullptr;
+  auto result = httpd_req_async_handler_begin(r, &copy);
+  if (result == ESP_OK) {
+    Job job{JobKind::WEB_UPLOAD, copy};
+    if (xQueueSend(jobs, &job, 0) == pdTRUE)
+      return ESP_OK;
+  }
+  // Keep the server pinned until response + async cleanup have both finished.
+  result = error(copy ? copy : r, "503 Service Unavailable", "升级任务队列繁忙，请稍后重试", r->content_len);
+  if (copy)
+    httpd_req_async_handler_complete(copy);
+  // No Flash/NVS work on the small HTTP dispatcher stack.
+  {
+    Guard mutation(mutation_mutex);
+    Guard l(ota_mutex);
+    Guard g(state_mutex);
+    web_session.complete_upload();
+    state.ota_active = false;
+    ota_busy = false;
+  }
+  notice("无法创建升级任务");
+  return result;
 }
 static esp_err_t info(httpd_req_t *r) {
+  WebStackSample stack_sample;
   if (!auth(r))
     return error(r, "403 Forbidden", "Forbidden");
-  auto s = snapshot();
+  // Avoid copying the multi-KiB system Status on the small HTTP stack.
+  struct {
+    char note[160];
+    OtaPhase phase;
+    OtaMode mode;
+    int progress;
+    uint32_t received, total, written;
+    bool pending;
+  } s{};
+  {
+    Guard g(state_mutex);
+    strlcpy(s.note, state.ota_note, sizeof s.note);
+    s.phase = state.ota_phase; s.mode = state.ota_mode;
+    s.progress = state.ota_progress; s.received = state.ota_received;
+    s.total = state.ota_total; s.written = state.ota_written; s.pending = state.pending;
+  }
   cJSON *j = cJSON_CreateObject();
+  if (!j)
+    return error(r, "503 Service Unavailable", "内存不足，请稍后重试");
   cJSON_AddStringToObject(j, "version", esp_app_get_description()->version);
-  cJSON_AddStringToObject(j, "result", s.ota_note);
-  cJSON_AddNumberToObject(j, "progress", s.ota_progress);
-  cJSON_AddStringToObject(j, "phase", ota_phase_name(s.ota_phase));
-  cJSON_AddNumberToObject(j, "received", s.ota_received);
-  cJSON_AddNumberToObject(j, "total", s.ota_total);
-  cJSON_AddNumberToObject(j, "written", s.ota_written);
-  cJSON_AddStringToObject(j, "mode", s.ota_mode==OtaMode::DELTA ? "delta" : "full");
+  cJSON_AddStringToObject(j, "result", s.note);
+  cJSON_AddNumberToObject(j, "progress", s.progress);
+  cJSON_AddStringToObject(j, "phase", ota_phase_name(s.phase));
+  cJSON_AddNumberToObject(j, "received", s.received);
+  cJSON_AddNumberToObject(j, "total", s.total);
+  cJSON_AddNumberToObject(j, "written", s.written);
+  cJSON_AddStringToObject(j, "mode", s.mode==OtaMode::DELTA ? "delta" : "full");
   cJSON_AddBoolToObject(j, "pending", s.pending);
   char *str = cJSON_PrintUnformatted(j);
+  cJSON_Delete(j);
+  if (!str)
+    return error(r, "503 Service Unavailable", "内存不足，请稍后重试");
   httpd_resp_set_type(r, "application/json");
   httpd_resp_set_hdr(r, "Cache-Control", "no-store");
-  httpd_resp_sendstr(r, str);
+  auto result = httpd_resp_sendstr(r, str);
   free(str);
-  cJSON_Delete(j);
-  return ESP_OK;
+  return result;
 }
-void ota_init() {
-  ota_mutex = xSemaphoreCreateMutex();
+// Only the OTA worker owns server start/stop. Never wait for HTTP while holding
+// ota_mutex, state_mutex or the GUI lock: handlers need those locks to finish.
+static bool web_start() {
+  if (server)
+    return web_routes_ready;
   httpd_config_t c = HTTPD_DEFAULT_CONFIG();
-  c.stack_size = 16384;
+  c.stack_size = 4096;
   c.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   c.recv_wait_timeout = 8;
   c.lru_purge_enable = true;
-  ESP_ERROR_CHECK(httpd_start(&server, &c));
+  auto e = httpd_start(&server, &c);
+  if (e != ESP_OK) {
+    ESP_LOGW("ota", "HTTP start failed: %s", esp_err_to_name(e));
+    return false;
+  }
+  web_running = true;
+  web_stack_min = 0;
   {
     httpd_uri_t u{};
     u.uri = "/";
     u.method = HTTP_GET;
     u.handler = root;
-    httpd_register_uri_handler(server, &u);
+    e = httpd_register_uri_handler(server, &u);
     u.uri = "/api/ota";
     u.method = HTTP_POST;
     u.handler = upload;
-    httpd_register_uri_handler(server, &u);
+    if (e == ESP_OK) e = httpd_register_uri_handler(server, &u);
     u.uri = "/api/status";
     u.method = HTTP_GET;
     u.handler = info;
-    httpd_register_uri_handler(server, &u);
+    if (e == ESP_OK) e = httpd_register_uri_handler(server, &u);
   }
-  jobs = xQueueCreate(2, sizeof(int));
-  if (!jobs)
+  if (e != ESP_OK) {
+    ESP_LOGW("ota", "HTTP route registration failed: %s", esp_err_to_name(e));
+    if (httpd_stop(server) == ESP_OK) { server = nullptr; web_running = false; }
+    return false;
+  }
+  web_routes_ready = true;
+  return true;
+}
+void ota_init() {
+  ota_mutex = xSemaphoreCreateMutex();
+  jobs = xQueueCreate(2, sizeof(Job));
+  if (!ota_mutex || !jobs)
     abort();
   // Long-lived flash workers need guaranteed contiguous internal RAM.
   static StackType_t stack[16384];
@@ -424,7 +514,15 @@ void ota_init() {
   }
 }
 void ota_session() {
-  Guard g(ota_mutex);
+  if (web_open_requested.exchange(true))
+    return;
+  Job job{JobKind::WEB_OPEN};
+  if (xQueueSend(jobs, &job, 0) != pdTRUE) {
+    web_open_requested = false;
+    notice("升级任务队列繁忙，请稍后重试");
+  }
+}
+static void web_open() {
   char ip[24];
   bool connected;
   {
@@ -432,20 +530,44 @@ void ota_session() {
     connected = state.wifi_connected;
     strlcpy(ip, state.ip, sizeof(ip));
   }
-  if (!server || !connected) {
+  if (!connected) {
     notice("请先连接 Wi-Fi");
     return;
   }
+  { Guard l(ota_mutex); if (web_session.uploading()) return; }
+  if (!web_start()) {
+    notice("网页升级开启失败，请稍后重试");
+    return;
+  }
   uint8_t r[16];
+  char token[33]{};
   esp_fill_random(r, sizeof(r));
   for (int i = 0; i < 16; i++)
     sprintf(token + 2 * i, "%02x", r[i]);
-  expires = now_ms() + 600000;
   {
+    Guard l(ota_mutex);
+    if (!web_session.open(token, now_ms()))
+      return;
     Guard state_lock(state_mutex);
     snprintf(state.ota_url, sizeof(state.ota_url), "http://%s/#%s", ip, token);
   }
   notice("网页升级已开启，有效期十分钟");
+}
+static void web_expire() {
+  if (!server)
+    return;
+  bool stop;
+  {
+    Guard l(ota_mutex);
+    Guard g(state_mutex);
+    stop = web_session.close_if_idle(now_ms(), state.wifi_connected);
+    if (!web_session.valid(now_ms())) state.ota_url[0] = 0;
+  }
+  if (stop) {
+    auto e = httpd_stop(server);
+    if (e == ESP_OK) { server = nullptr; web_running = false; web_routes_ready = false; }
+    else ESP_LOGW("ota", "HTTP stop failed: %s", esp_err_to_name(e));
+  }
 }
 struct ResponseHeaders {
   char content_type[96]{};
@@ -612,7 +734,7 @@ void ota_check() {
     status(OtaPhase::FAILED, "请先设置 HTTPS 更新地址并联网");
     return;
   }
-  int job = 1;
+  Job job{JobKind::CHECK};
   if (xQueueSend(jobs, &job, 0) != pdTRUE) {
     checking = false;
     status(OtaPhase::FAILED, "升级任务队列繁忙，请稍后重试");
@@ -754,7 +876,7 @@ void ota_install(OtaMode mode, const char *sha) {
   install_mode=mode;
   { Guard g(state_mutex); state.ota_mode=mode; }
   status(OtaPhase::TRANSFERRING,"正在连接固件服务器",0,true);
-  int job=2;
+  Job job{JobKind::INSTALL};
   if (xQueueSend(jobs,&job,0)!=pdTRUE) fail("无法创建升级任务");
 }
 void ota_invalidate() {
@@ -767,15 +889,47 @@ void ota_invalidate() {
   state.ota_sha[0]=0; state.ota_version[0]=0; ++state.ota_revision;
 }
 static void worker(void *) {
-  int job;
-  for (;;)
-    if (xQueueReceive(jobs, &job, portMAX_DELAY)) {
-      if (job == 1) {
-        check_task(nullptr);
-        if(recheck_requested.exchange(false)) ota_check();
-      } else
-        install_task(nullptr);
+  Job job;
+  for (;;) {
+    if (xQueueReceive(jobs, &job, server ? pdMS_TO_TICKS(1000) : portMAX_DELAY)) {
+      switch (job.kind) {
+        case JobKind::CHECK:
+          check_task(nullptr);
+          if (recheck_requested.exchange(false)) ota_check();
+          break;
+        case JobKind::INSTALL:
+          install_task(nullptr);
+          break;
+        case JobKind::WEB_OPEN:
+          web_open();
+          web_open_requested = false;
+          break;
+        case JobKind::WEB_UPLOAD: {
+          bool installed = false;
+          const int fd = httpd_req_to_sockfd(job.request);
+          const auto result = receive_upload(job.request, installed);
+          // Still own this socket here. Shut down failed requests before
+          // relinquishing ownership, avoiding a close against a reused fd.
+          if (result != ESP_OK)
+            shutdown(fd, SHUT_RDWR);
+          const auto completed = httpd_req_async_handler_complete(job.request);
+          if (completed != ESP_OK)
+            ESP_LOGW("ota", "Async HTTP completion: %s", esp_err_to_name(completed));
+          { Guard l(ota_mutex); web_session.complete_upload(); }
+          if (installed) {
+            // The original HTTP thread and its response no longer own the OTA
+            // request. Reuse this stack instead of allocating a reboot task.
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            notifications_checkpoint();
+            esp_restart();
+          }
+          break;
+        }
+      }
     }
+    worker_stack_min = uxTaskGetStackHighWaterMark(nullptr);
+    web_expire();
+  }
 }
 void ota_boot_check() {
   const auto *p = esp_ota_get_running_partition();

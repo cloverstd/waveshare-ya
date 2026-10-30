@@ -227,6 +227,11 @@ esp_err_t ble_write(int, uint16_t, const void *, size_t);
 esp_err_t ble_subscribe(int, uint16_t);
 void ota_init();
 void ota_session();
+struct OtaWebStatus {
+  bool running, session_valid, uploading;
+  uint32_t http_stack_min, worker_stack_min;
+};
+OtaWebStatus ota_web_status();
 void ota_check();
 void ota_install(OtaMode mode, const char *sha);
 void ota_invalidate();

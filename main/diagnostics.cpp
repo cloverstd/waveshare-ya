@@ -327,6 +327,12 @@ static void task(void *) {
                                                  : 0);
         cJSON_AddNumberToObject(out, "diag_stack_free_min_bytes",
                                 uxTaskGetStackHighWaterMark(nullptr));
+        const auto web = ota_web_status();
+        cJSON_AddBoolToObject(out, "ota_web_running", web.running);
+        cJSON_AddBoolToObject(out, "ota_web_session_valid", web.session_valid);
+        cJSON_AddBoolToObject(out, "ota_web_uploading", web.uploading);
+        cJSON_AddNumberToObject(out, "ota_http_stack_free_min_bytes", web.http_stack_min);
+        cJSON_AddNumberToObject(out, "ota_worker_stack_free_min_bytes", web.worker_stack_min);
         cJSON_AddNumberToObject(out, "reset_reason", esp_reset_reason());
         ok = true;
       } else if (!strcmp(name, "wifi_state")) {

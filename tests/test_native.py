@@ -10,6 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
     "wake_handoff_test.cpp", "ui_policy_test.cpp", "data_protocol_test.cpp",
     "power_policy_test.cpp", "wifi_policy_test.cpp", "notifications_test.cpp",
     "log_buffer_test.cpp", "companion_policy_test.cpp", "rich_codec_test.cpp", "battery_estimator_test.cpp",
+    "ota_web_session_test.cpp",
 ])
 def test_native_policy(source, tmp_path):
     executable = tmp_path / "policy"

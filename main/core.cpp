@@ -597,9 +597,9 @@ void services_init() {
     abort();
   notifications_init();
   time_service_init();
-  wifi_init(); // Initializes lwIP before the OTA HTTP server opens sockets.
-  // Reserve the OTA worker's contiguous internal stack before BLE/data tasks
-  // fragment the internal heap. Flash work must never use a PSRAM stack.
+  wifi_init(); // Initializes lwIP before any OTA network jobs.
+  // One preallocated internal stack serves online OTA and async web uploads.
+  // The small HTTP dispatcher is started only for an explicit upload session.
   ota_init();
   data_init();
   ble_init();

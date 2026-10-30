@@ -42,6 +42,8 @@ python -m esptool --chip esp32s3 --port PORT write_flash 0 private/backups/origi
 
 `tools/device.py` 通过 USB JSON 行协议读取状态和导出屏幕渲染图。例：`python tools/device.py '{"op":"status"}'`。Wi-Fi 配网用权限 0600 的 JSON 输入文件加 `--file`；不要将密码放进 shell 命令历史。此接口是物理 USB 开发接口，不提供远程网络 shell。
 
+OTA 按需 HTTP 服务器诊断：USB `status` 的 `ota_web_running` 表示线程/监听资源仍存在，`ota_web_session_valid` 表示十分钟授权有效，`ota_web_uploading` 包含已受理、排队和清理中的上传。`ota_http_stack_free_min_bytes` 是最近一次 HTTP 会话的任务栈低水位采样，`ota_worker_stack_free_min_bytes` 是 OTA 工作线程完成工作后的低水位采样；0 表示尚未采样，不表示实测栈已耗尽。状态不包含访问令牌。实机应分别比较未开启、开启、上传中和过期关闭后的内部堆/最大连续块，并反复开启/过期及验证上传跨期限、分配失败、断线、在线更新和签名拒绝路径。
+
 页面 ID：0 桌面、1 设置、2 系统状态、3 Wi-Fi、4 BLE、5 显示、6 声音、7 存储、8 OTA、9 系统、10 四角校准、12 日期与时间；9 为系统状态兼容入口。`{"op":"page","id":2}` 用于切换验收页面。`--snapshot artifacts/battery.png` 导出渲染图；截图不能证明实体屏幕的触摸或物理遮挡情况。
 
 新增电源设置诊断页面ID15、日志应用诊断页面ID14，默认Warning，使用及构建缓存迁移见[LOGS.md](LOGS.md)。
