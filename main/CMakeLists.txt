@@ -1,7 +1,7 @@
 idf_component_register(SRCS "logs.cpp" "notifications.cpp" "main.cpp" "data.cpp" "power.cpp" "data_app.cpp" "diagnostics.cpp" "core.cpp" "board.cpp" "network.cpp" "rtc.cpp" "metrics.cpp" "bluetooth.cpp" "ota.cpp" "ui.cpp" "app_registry.cpp" "font_zh.c"
     INCLUDE_DIRS "." "../components/XPowersLib/src"
     PRIV_REQUIRES wpa_supplicant
-    REQUIRES nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
+    REQUIRES espressif__esp_delta_ota nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 

@@ -24,11 +24,11 @@ GitHub 仓库启用 Settings → Releases → Enable release immutability。已�
 
 1. 修改根目录 `VERSION` 为新的稳定版本 `X.Y.Z`，提交并推送 main，等待检查通过。
 2. 创建并推送对应 Tag，例如 `git tag -a v0.5.1 -m 'YA 0.5.1'`、`git push origin v0.5.1`。Tag提交必须属于main；版本最长31字节。
-3. `Check and release firmware` 从 Tag 构建签名应用，检查板型、布局、版本、6MiB限制、签名、依赖锁、测试与公开内容。正式构建禁止测试CA及故障注入，不自动生成替代生产密钥。
+3. `Check and release firmware` 从 Tag 构建签名应用，检查板型、布局、版本、6MiB限制、签名、依赖锁、测试与公开内容；从最近三个较低正式Release取原始签名镜像，生成并逐字节还原验证更小的增量包。正式构建禁止测试CA及故障注入，不自动生成替代生产密钥。
 4. 仅当网页与固件检查都通过，先创建Draft Release，上传所有附件，重新下载并校验SHA256SUMS，再发布为Latest。重跑只允许更新尚未发布的Draft，已发布文件不得覆盖。
 5. Workers最多60秒后发现新正式清单，下载通过版本路径代理对应Release附件。设备仍须用户确认安装。发布不会自动升级任何设备。
 
-附件包括签名 `waveshare-ya-X.Y.Z.bin`、`manifest.json`、`SHA256SUMS`、首次安装ZIP、脱敏源码ZIP及`release-info.json`。后者记录源commit、Actions run和固件SHA256。首次安装ZIP不能通过OTA上传。
+附件包括签名 `waveshare-ya-X.Y.Z.bin`、`manifest.json`、`SHA256SUMS`、首次安装ZIP、脱敏源码ZIP及`release-info.json`。0.6.0起还包含`delta-index.json`和可用的`waveshare-ya-旧版-to-新版.patch`，均纳入SHA256SUMS。后者记录源commit、Actions run和固件SHA256。首次安装ZIP不能通过OTA上传。
 
 ## 网站部署与本地开发
 
@@ -44,7 +44,7 @@ npm run dev
 
 首页在`/`，现有web资源复制到`/companion/`。统一数据网关仍由用户自行提供，Worker不保存天气位置、手工数据或用户访问令牌。
 
-Worker仅代理固定公开仓库，限制上游HTTPS主机和重定向次数；检查清单字段与大小，下载保留完整签名应用字节。对客户端清单禁缓存；Worker内部最多缓存60秒，版本化文件长期缓存。错误不缓存。下载使用FixedLengthStream，不能改成普通ReadableStream输出，否则可能失去Content-Length。
+Worker仅代理固定公开仓库，限制上游HTTPS主机和重定向次数；检查清单字段与大小，下载保留完整签名应用及补丁的原始字节。增量索引通过摘要绑定全量清单，旧设备仍读取同一扁平全量清单。对客户端清单禁缓存；Worker内部最多缓存60秒，版本化文件长期缓存。错误不缓存。下载使用FixedLengthStream，不能改成普通ReadableStream输出，否则可能失去Content-Length。
 
 线上无设备写入检查：`python3 tools/check_update.py`。它验证HTTP/1.1状态、准确长度、禁止重定向/压缩/chunked，并对重复下载校验SHA256。无正式Release时404属于预期空站点状态。
 

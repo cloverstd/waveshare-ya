@@ -5,3 +5,5 @@ PyYAML==6.0.3
 pillow==13.0.0
 bleak==3.0.2
 fonttools==4.68.0
+detools==0.53.0
+heatshrink2==0.15.0

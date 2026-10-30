@@ -28,6 +28,7 @@ struct Config {
 struct SystemPrefs {
   uint16_t sleep_battery = 30, sleep_usb = 300;
 };
+enum class OtaMode { FULL = 0, DELTA = 1 };
 enum class OtaPhase {
   IDLE,
   CHECKING,
@@ -76,7 +77,11 @@ struct Status {
   uint32_t internal_min = 0, internal_largest = 0;
   uint64_t flash_total = 0, flash_free = 0;
   OtaPhase ota_phase = OtaPhase::IDLE;
-  uint32_t ota_received = 0, ota_total = 0;
+  uint32_t ota_received = 0, ota_total = 0, ota_written = 0;
+  uint32_t ota_full_size = 0, ota_delta_size = 0, ota_revision = 0;
+  bool ota_delta_available = false, ota_active = false;
+  OtaMode ota_mode = OtaMode::FULL;
+  char ota_sha[65]{}, ota_delta_note[160]{};
   int64_t notice_expires = 0;
   bool wifi_connected = false, wifi_busy = false, sd_mounted = false, ble_ready = false,
        pending = false;
@@ -215,7 +220,8 @@ esp_err_t ble_subscribe(int, uint16_t);
 void ota_init();
 void ota_session();
 void ota_check();
-void ota_install();
+void ota_install(OtaMode mode, const char *sha);
+void ota_invalidate();
 void ota_boot_check();
 struct DisplayMetrics {
   uint32_t actual_fps = 0, refresh_count = 0, flush_chunks = 0;

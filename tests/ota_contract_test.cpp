@@ -73,5 +73,24 @@ int main() {
   rejects("");
   rejects(valid + std::string(4096 - valid.size(), ' '));
   assert(parse(valid + std::string(4095 - valid.size(), ' '), release));
+  using namespace ya::ota_contract;
+  assert(newer("0.6.0","0.5.9") && newer("0.10.0","0.9.9"));
+  assert(!newer("0.5.1","0.6.0") && !newer("0.6.0","0.6.0"));
+  assert(!newer("0.6.0-test","0.5.1") && !stable("01.2.3"));
+  rejects(changed("\"notes\":\"更新\"", "\"delta_index_url\":\"https://example.com/index\""));
+  assert(parse(valid, release));
+  std::string entry=R"({"format":"detools-heatshrink-v1","base_version":"0.1.0","base_size":1000,"base_sha256":")"+
+    std::string(64,'b')+R"(","url":"https://example.com/update.patch","size":100,"sha256":")"+std::string(64,'c')+"\"}";
+  std::string index=R"({"schema":1,"product":"waveshare-ya","board":"esp32-s3-touch-amoled-2.16","layout":"ab6-v1","version":"0.2.0","size":2000000,"sha256":")"+
+    std::string(64,'a')+"\",\"patches\":["+entry+"]}";
+  Delta d;
+  auto delta_ok=[&](const std::string &v) {return parse_delta(v.data(),v.size(),release,"0.1.0",1000,std::string(64,'b').c_str(),d);};
+  assert(delta_ok(index) && d.size==100);
+  assert(!delta_ok(index+"{}"));
+  assert(!delta_ok(index.substr(0,index.size()-1)));
+  auto bad=index;bad.replace(bad.find("2000000"),7,"2000001");assert(!delta_ok(bad));
+  bad=index;bad.replace(bad.find("1000"),4,"1001");assert(!delta_ok(bad));
+  bad=index;bad.replace(bad.find(entry),entry.size(),entry+","+entry);assert(!delta_ok(bad));
+  bad=index;bad.insert(1,"\"nested\":[[[[]]]],");assert(!delta_ok(bad));
   std::cout << "OTA contract cases passed: " << cases << "\n";
 }
