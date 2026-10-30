@@ -174,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
     def do_GET(self):
-        files = {'/':'index.html','/index.html':'index.html','/app.mjs':'app.mjs','/protocol.mjs':'protocol.mjs','/text-render.mjs':'text-render.mjs','/connection.mjs':'connection.mjs','/style.css':'style.css'}
+        files = {'/':'index.html','/index.html':'index.html','/app.mjs':'app.mjs','/protocol.mjs':'protocol.mjs','/text-render.mjs':'text-render.mjs','/gallery.mjs':'gallery.mjs','/connection.mjs':'connection.mjs','/style.css':'style.css'}
         name = files.get(urllib.parse.urlsplit(self.path).path)
         if not name: return self.respond(404,b'{}')
         mime = 'text/html; charset=utf-8' if name.endswith('.html') else 'text/css' if name.endswith('.css') else 'text/javascript'

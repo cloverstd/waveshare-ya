@@ -1,7 +1,7 @@
-idf_component_register(SRCS "companion.cpp" "logs.cpp" "notifications.cpp" "main.cpp" "data.cpp" "power.cpp" "data_app.cpp" "diagnostics.cpp" "core.cpp" "board.cpp" "network.cpp" "rtc.cpp" "metrics.cpp" "bluetooth.cpp" "ota.cpp" "ota_view.cpp" "boot_view.cpp" "ui.cpp" "app_registry.cpp" "font_zh.c"
+idf_component_register(SRCS "gallery.cpp" "gallery_codec.cpp" "gallery_app.cpp" "companion.cpp" "logs.cpp" "notifications.cpp" "main.cpp" "data.cpp" "power.cpp" "data_app.cpp" "diagnostics.cpp" "core.cpp" "board.cpp" "network.cpp" "rtc.cpp" "metrics.cpp" "bluetooth.cpp" "ota.cpp" "ota_view.cpp" "boot_view.cpp" "ui.cpp" "app_registry.cpp" "font_zh.c"
     INCLUDE_DIRS "." "../components/XPowersLib/src"
     PRIV_REQUIRES wpa_supplicant
-    REQUIRES espressif__zlib espressif__esp_delta_ota nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
+    REQUIRES espressif__esp_new_jpeg espressif__libpng espressif__zlib espressif__esp_delta_ota nvs_flash app_update esp_http_server esp_http_client esp_https_ota esp_wifi esp_netif esp_timer esp_event esp_driver_gpio esp_driver_usb_serial_jtag bt json mbedtls esp_system fatfs spiffs)
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 target_sources(${COMPONENT_LIB} PRIVATE "font_zh_caption.c" "font_zh_title.c"
     "font_inter_20.c" "font_inter_24.c" "font_inter_28.c" "font_inter_40.c")
@@ -37,3 +37,5 @@ endif()
 if(NOT CONFIG_ESP_WIFI_11KV_SUPPORT OR NOT CONFIG_ESP_WIFI_RRM_SUPPORT OR NOT CONFIG_ESP_WIFI_WNM_SUPPORT OR NOT CONFIG_ESP_WIFI_11R_SUPPORT)
   message(FATAL_ERROR "YA 0.4 requires KVR. Use tools/build_release.sh 0.4.0 or a fresh SDKCONFIG with sdkconfig.defaults; see docs/WIFI.md")
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/spiffs_compat.cmake")

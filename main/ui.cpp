@@ -1565,7 +1565,7 @@ static void input_tick(lv_timer_t *) {
       return;
     if (modal && page_id != 10)
       close_modal();
-    else
+    else if (!(active && active->back && active->back()))
       show(ui_policy::back_page(page_id, active != nullptr));
   }
 }

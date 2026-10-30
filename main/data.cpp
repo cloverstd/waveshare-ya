@@ -1,5 +1,6 @@
 #include "data.hpp"
 #include "companion.hpp"
+#include "gallery.hpp"
 #include "logs.hpp"
 #include <memory>
 #include "power.hpp"
@@ -290,7 +291,11 @@ void log_page(cJSON *j, const LogBuffer &v, uint32_t lost, uint32_t &cursor, uns
 void local_request(Peer &p, cJSON *j) {
   auto resource = str(j, "resource"), id = str(j, "id"), op = str(j, "op");
   cJSON *body = nullptr;
-  if (resource == "info.text") body = companion_request(p.conn, j);
+  if (resource.rfind("gallery.", 0) == 0) {
+    if (p.max_bytes < 4096) { error(p, id, "message_limit"); return; }
+    body = gallery::request(p.conn, j);
+  }
+  else if (resource == "info.text") body = companion_request(p.conn, j);
   else {
     body = cJSON_CreateObject(); cJSON_AddStringToObject(body, "status", "succeeded");
     if (op == "unsubscribe") { p.log_live = false; p.log_batch.reset(); p.log_finish.clear(); }
@@ -363,7 +368,7 @@ void accept(Peer &p, const std::string &text) {
     auto *h = envelope("hello", session);
     cJSON_AddNumberToObject(h, "max_bytes", 4096);
     cJSON_AddBoolToObject(h, "commands", false);
-    cJSON_AddStringToObject(h, "companion", "text-image-v1,logs-v1");
+    cJSON_AddStringToObject(h, "companion", "text-image-v1,logs-v1,gallery-v1");
     send(p, h);
     cJSON_Delete(h);
     if (p.probe.empty()) {
@@ -407,7 +412,7 @@ void accept(Peer &p, const std::string &text) {
   if (p.seen.size() > 16)
     p.seen.pop_front();
   if (type == "request" && number(j, "schema") == 1 &&
-      (str(j, "resource") == "info.text" || str(j, "resource") == "system.logs")) {
+      (str(j, "resource").rfind("gallery.", 0) == 0 || str(j, "resource") == "info.text" || str(j, "resource") == "system.logs")) {
     local_request(p, j); cJSON_Delete(j); return;
   }
   if (type == "response" && str(j, "reply_to") == p.probe &&
@@ -621,6 +626,7 @@ void process(Message &m) {
     ble_data_drop(m.conn);
   } else if (m.kind == 2) {
     companion_disconnect(m.conn);
+    gallery::disconnect(m.conn);
     auto *p = peer(m.conn);
     if (p)
       *p = Peer{};
@@ -882,6 +888,7 @@ void worker(void *) {
 } // namespace
 void data_init() {
   companion_init();
+  gallery::init();
   mutex = xSemaphoreCreateMutex();
   queue = xQueueCreate(20, sizeof(Message *));
   if (!mutex || !queue)

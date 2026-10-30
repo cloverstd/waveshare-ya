@@ -1,6 +1,8 @@
+import {initGallery} from './gallery.mjs';
 import {Connection} from './connection.mjs';
 import {renderText,packText,base64} from './text-render.mjs';
 const $=id=>document.getElementById(id);
+let galleryCapable=false;
 let channel,session='',identity={service:'ya-local',scope:'default'},epoch=0,capable=false;
 let pendingText=null,sending=false,stopped=false,transfer='',sequence=0,cursor=0,boot=null;
 const requests=new Map(),entries=new Map();
@@ -24,7 +26,7 @@ async function message(m){
  if(m.session!==session||m.service!==identity.service||m.scope!==identity.scope)return;
  const receivedEpoch=epoch,ch=channel;
  await ch.send(envelope('ack',{reply_to:m.id}));if(receivedEpoch!==epoch)return;
- if(m.type==='hello'){capable=m.companion?.includes('text-image-v1')&&m.companion?.includes('logs-v1');if(!capable)$('activity').textContent='此固件不支持新数据站，请升级设备';controls();return;}
+ if(m.type==='hello'){galleryCapable=!!m.companion?.includes('gallery-v1');gallery.state(galleryCapable);capable=m.companion?.includes('text-image-v1')&&m.companion?.includes('logs-v1');if(!capable)$('activity').textContent='此固件不支持新数据站，请升级设备';controls();return;}
  if(m.type==='response'||m.type==='error'){
   const r=requests.get(m.reply_to);if(r){clearTimeout(r.timer);requests.delete(m.reply_to);m.status==='succeeded'?r.resolve(m.data||{}):r.reject(Error(m.error?.code||'设备未接受请求'));}return;
  }
@@ -35,12 +37,13 @@ async function message(m){
 }
 export const connection=new Connection({bluetooth:navigator.bluetooth,onLog:log,
  auto:()=>$('auto').checked,
- hello:s=>({proto:'ya.data',v:1,type:'hello',id:crypto.randomUUID(),session:s,...identity,max_bytes:4096,commands:false,companion:'text-image-v1,logs-v1'}),
+ hello:s=>({proto:'ya.data',v:1,type:'hello',id:crypto.randomUUID(),session:s,...identity,max_bytes:4096,commands:false,companion:'text-image-v1,logs-v1,gallery-v1'}),
  onIdentity:j=>{identity=j;},
- onChannel:(ch,s,hello)=>{rejectRequests();channel=ch;session=s;identity={service:hello.service,scope:hello.scope};epoch++;capable=false;},
+ onChannel:(ch,s,hello)=>{rejectRequests();channel=ch;session=s;identity={service:hello.service,scope:hello.scope};epoch++;capable=false;galleryCapable=false;gallery.state(false);},
  onMessage:message,
- onState:state=>{$('connection').textContent=state;if(connection.stage!=='ready'){$('live').checked=false;rejectRequests();}controls();if(connection.stage==='ready')void flushText();}
+ onState:state=>{$('connection').textContent=state;gallery.state(galleryCapable);if(connection.stage!=='ready'){$('live').checked=false;rejectRequests();}controls();if(connection.stage==='ready')void flushText();}
 });
+const gallery=initGallery({request,connected:()=>connection.stage==='ready',host:document.getElementById('gallery-manager')?.querySelector?document.getElementById('gallery-manager'):null});
 async function flushText(){
  if(!pendingText||sending||connection.stage!=='ready'||!capable)return;
  const text=pendingText,startedEpoch=epoch;let committed=false;

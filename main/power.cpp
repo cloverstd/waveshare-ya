@@ -1,6 +1,7 @@
 #include "notifications.hpp"
 #include "companion.hpp"
 #include "power.hpp"
+#include "gallery.hpp"
 #include "power_policy.hpp"
 #include "wake_handoff.hpp"
 #include "data.hpp"
@@ -74,7 +75,7 @@ bool suspend() {
 void deep() {
   if (wake_handoff.pending())
     return;
-  if (companion_busy() || data_busy() || !data_checkpoint() || !notifications_checkpoint())
+  if (companion_busy() || gallery::busy() || data_busy() || !data_checkpoint() || !notifications_checkpoint())
     return;
   bool pending;
   {

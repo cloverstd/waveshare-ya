@@ -6,6 +6,9 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("source,symbol,budget", [
+    ("gallery.cpp", "void ya::gallery::{anonymous}::worker(void*)", 1024),
+    ("gallery.cpp", "bool ya::gallery::{anonymous}::fetch(", 3072),
+    ("gallery_codec.cpp", "ya::gallery::decode(", 1024),
     ("companion.cpp", "cJSON* ya::companion_request(int, const cJSON*)", 2048),
     ("data.cpp", "void ya::{anonymous}::worker(void*)", 1024),
     ("main.cpp", "void app_main()", 512),

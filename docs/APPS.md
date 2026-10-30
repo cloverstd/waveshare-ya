@@ -39,7 +39,7 @@ storage_list(relative,offset,limit,callback,context) 分页枚举，每次上限
 
 例如读取 `sensor.room_temperature` 显示其值与单位，点击灯光按钮调用 `light.turn_on/off`，等服务器状态反馈再确认 UI，失败时恢复原状态。离线时不积压危险或重复控制指令，恢复连接后重新拉状态。不要用 PMU 温度代替室温。
 
-相册与 HA 应用本期不提供完整产品功能，以上是接入约定。`examples/app_template` 是可加入构建的最小模板。
+相册已按[相册文档](GALLERY.md)接入；HA仍为后续接入约定。`examples/app_template` 是可加入构建的最小模板。
 
 应用设置使用 `app_config_get(id,schema,data,&size)` / `app_config_set(id,schema,data,size)`，id 限 1–15 位字母数字、下划线或短横线，每个应用 blob 最多 4096 字节。系统按运行槽分别保存到 apps_a/apps_b，OTA 切换前复制到目标槽。schema 不匹配返回错误，迁移由应用显式处理；写入受升级互斥保护。不要自行使用不隔离的全局 NVS 命名空间存放需要支持回退的 HA 配置。
 
@@ -94,3 +94,7 @@ Status 是数KB结构；尤其不得在app_main长期栈帧和嵌套OTA启动检
 内置SPIFFS首次挂载失败后完整检查分区，仅全部字节为0xFF才自动初始化；读失败或任何既有内容都不格式化。`FLASH_RETRY`通过原服务队列重试，状态带flash_note/flash_error，TF卡仍显式挂载、安全卸载。
 
 信息应用使用companion系统服务提供的不可变共享图像快照，不在GUI中解压或读文件。最近文字原文和图像以版本化双份缓存保存在内置存储，包含头部CRC32及压缩包SHA-256；只更新另一份，校验新文件成功后才替换当前显示。断电/损坏回退到另一份有效缓存；旧固件忽略这些文件。缓存不改变A/B设置复制或回退规则。
+
+## 相册及应用内返回
+
+0.8.0在App描述符末尾增加默认空的`bool (*back)()`回调。物理返回键先关闭弹窗，再调用当前应用back；返回true表示已处理内部层级，否则沿用系统返回路由。原有应用初始化保持兼容。相册用该回调依次返回九宫格与相册列表。`app_config_get_slot`是只读的双槽配置查询，仅用于保留回退引用等系统服务，不绕过现有写入互斥。

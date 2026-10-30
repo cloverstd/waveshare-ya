@@ -145,6 +145,7 @@ bool setting_result(SettingResult &result);
 esp_err_t save_config(const Config &);
 esp_err_t copy_config_to(const char *partition);
 esp_err_t app_config_get(const char *id, uint32_t schema, void *data, size_t *size);
+esp_err_t app_config_get_slot(const char *slot, const char *id, uint32_t schema, void *data, size_t *size);
 esp_err_t app_config_set(const char *id, uint32_t schema, const void *data, size_t size);
 esp_err_t setting(const char *key, int value);
 esp_err_t set_update_url(const char *);
@@ -258,6 +259,7 @@ struct App {
   uint32_t capabilities;
   Create create;
   Hook enter, leave, destroy;
+  bool (*back)() = nullptr;
 };
 extern const App apps[];
 extern const size_t app_count;

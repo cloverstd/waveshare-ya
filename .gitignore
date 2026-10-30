@@ -16,3 +16,6 @@ node_modules/
 .wrangler/
 worker/dist/
 worker/coverage/
+
+# Local worktree toolchain link
+.tools

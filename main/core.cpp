@@ -168,12 +168,14 @@ static bool app_key(const char *id) {
       return false;
   return true;
 }
-esp_err_t app_config_get(const char *id, uint32_t schema, void *data, size_t *size) {
-  if (!app_key(id) || !size || !data || *size > 4096)
+esp_err_t app_config_get_slot(const char *slot, const char *id, uint32_t schema, void *data,
+                              size_t *size) {
+  if (!slot || (strcmp(slot, "ota_0") && strcmp(slot, "ota_1")) || !app_key(id) ||
+      !size || !data || *size > 4096)
     return ESP_ERR_INVALID_ARG;
   Guard g(app_store_mutex);
   nvs_handle_t h;
-  auto e = nvs_open(app_ns(esp_ota_get_running_partition()->label), NVS_READONLY, &h);
+  auto e = nvs_open(app_ns(slot), NVS_READONLY, &h);
   if (e != ESP_OK)
     return e;
   uint8_t *blob = (uint8_t *)malloc(4100);
@@ -200,6 +202,9 @@ esp_err_t app_config_get(const char *id, uint32_t schema, void *data, size_t *si
   free(blob);
   nvs_close(h);
   return e;
+}
+esp_err_t app_config_get(const char *id, uint32_t schema, void *data, size_t *size) {
+  return app_config_get_slot(esp_ota_get_running_partition()->label, id, schema, data, size);
 }
 esp_err_t app_config_set(const char *id, uint32_t schema, const void *data, size_t size) {
   if (!app_key(id) || !data || size > 4096)
