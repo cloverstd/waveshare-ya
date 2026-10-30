@@ -11,6 +11,7 @@ struct PowerPrefs {
 };
 extern std::atomic<bool> screen_sleeping, power_paused, power_wake_ui;
 void power_init();
+void power_request_wake(); // debounced physical press; never needs a GUI lock
 void power_notify();
 bool power_notification_active();
 void power_hold(unsigned milliseconds);

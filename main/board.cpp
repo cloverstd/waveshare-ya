@@ -13,6 +13,7 @@
 #include "power.hpp"
 #include "service_internal.hpp"
 #include "service_policy.hpp"
+#include "wake_handoff.hpp"
 #include <cmath>
 #include <dirent.h>
 #include <string>
@@ -25,6 +26,20 @@ static bool io_error = false, pmu_ok = false;
 static esp_codec_dev_handle_t speaker;
 static std::atomic<int> last_volume{-1}, last_mute{-1};
 static service_policy::Key back_key, home_key, power_key;
+static std::atomic<uint32_t> key_events{0};
+static void key_task(void *) {
+  for (;;) {
+    const auto now = now_ms();
+    const auto wake = screen_sleeping.load() ? service_policy::KEY_WAKE : 0;
+    auto events = back_key.sample(gpio_get_level(GPIO_NUM_0) == 0, now, 1, 0, wake) |
+                  home_key.sample(gpio_get_level(GPIO_NUM_18) == 0, now, 2, 0, wake) |
+                  power_key.sample(gpio_get_level(GPIO_NUM_16) != 0, now, 4, 8, wake);
+    events = power_wake::route_keys(events, screen_sleeping.load(), power_request_wake);
+    if (events)
+      key_events.fetch_or(events);
+    vTaskDelay(pdMS_TO_TICKS(16));
+  }
+}
 static int read_pmu(uint8_t, uint8_t r, uint8_t *b, uint8_t n) {
   auto e = i2c_master_transmit_receive(pmu_dev, &r, 1, b, n, 100);
   if (e != ESP_OK)
@@ -72,6 +87,12 @@ esp_err_t board_init() {
   gc.pin_bit_mask = 1ULL << 16;
   gc.pull_up_en = GPIO_PULLUP_DISABLE;
   ESP_RETURN_ON_ERROR(gpio_config(&gc), "board", "power key");
+  // Keep sampling while LVGL is paused. No GUI lock, I2C or storage work here.
+  static StackType_t key_stack[2048];
+  static StaticTask_t key_control;
+  if (!xTaskCreateStatic(key_task, "keys", sizeof key_stack, nullptr, 5, key_stack,
+                         &key_control))
+    return ESP_ERR_NO_MEM;
   bsp_display_cfg_t display{};
   display.lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
   display.lv_adapter_cfg.task_stack_size = 12288;
@@ -149,10 +170,7 @@ void board_audio_test() {
 }
 bool board_key() { return gpio_get_level(GPIO_NUM_18) == 0; }
 uint32_t board_key_events() {
-  const auto now = now_ms();
-  return back_key.sample(gpio_get_level(GPIO_NUM_0) == 0, now, 1) |
-         home_key.sample(gpio_get_level(GPIO_NUM_18) == 0, now, 2) |
-         power_key.sample(gpio_get_level(GPIO_NUM_16) != 0, now, 4, 8);
+  return key_events.exchange(0);
 }
 static bool card_mounted() {
   Guard g(state_mutex);
