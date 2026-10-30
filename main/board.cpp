@@ -103,8 +103,7 @@ esp_err_t board_init() {
   display.touch_flags.mirror_y = 1;
   if (!bsp_display_start_with_config(&display))
     return ESP_FAIL;
-  bsp_display_brightness_set(power_silent_boot()?0:config().brightness);
-  if(!power_silent_boot())bsp_display_sleep_set(false);
+  ESP_RETURN_ON_ERROR(ui_boot_start(), "board", "startup display");
   speaker = bsp_audio_codec_speaker_init();
   if (speaker)
     board_volume();

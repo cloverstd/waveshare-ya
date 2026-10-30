@@ -11,6 +11,8 @@
 #include "wake_handoff.hpp"
 #include "ui_policy.hpp"
 #include "ota_view.hpp"
+#include "boot_view.hpp"
+#include "esp_lv_adapter.h"
 #include <ctime>
 #include <string>
 #include <algorithm>
@@ -26,6 +28,7 @@ static lv_obj_t *root, *content, *headline, *clock_label, *notification, *wifi_i
     *detail = nullptr,
     *list = nullptr, *modal = nullptr, *wake_shield = nullptr;
 static lv_obj_t *ssid_input, *pass_input, *text_input;
+static lv_obj_t *boot_root = nullptr;
 static const App *active = nullptr;
 static bool asleep = false;
 static int64_t activity = 0;
@@ -1856,6 +1859,29 @@ static void refresh(lv_timer_t *) {
     }
   }
 }
+esp_err_t ui_boot_start() {
+  if (power_silent_boot())
+    return ESP_OK;
+  if (!bsp_display_lock(-1))
+    return ESP_ERR_TIMEOUT;
+  boot_root = boot_view_create(lv_screen_active(), &font_zh);
+  lv_obj_invalidate(lv_screen_active());
+  bsp_display_unlock();
+
+  // Render a full valid frame while output is still off. Pause without holding
+  // the GUI lock before panel commands: SPI tx_param drains pending pixel DMA.
+  auto e = esp_lv_adapter_refresh_now(nullptr);
+  if (e != ESP_OK)
+    return e;
+  e = esp_lv_adapter_pause(1000);
+  if (e != ESP_OK)
+    return e;
+  e = bsp_display_brightness_set(config().brightness);
+  if (e == ESP_OK)
+    e = bsp_display_sleep_set(false);
+  const auto resumed = esp_lv_adapter_resume();
+  return e != ESP_OK ? e : resumed;
+}
 void ui_start() {
   bsp_display_lock(-1);
   // Initialize BSP/SPI/Wi-Fi with the pinned internal-allocation policy first.
@@ -1974,6 +2000,10 @@ void ui_start() {
   lv_timer_create(refresh, 100, nullptr);
   lv_timer_create(input_tick, 16, nullptr);
   ui_heartbeat = now_ms();
+  if (boot_root) {
+    lv_obj_delete(boot_root);
+    boot_root = nullptr;
+  }
   bsp_display_unlock();
 }
 } // namespace ya

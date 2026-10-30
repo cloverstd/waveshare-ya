@@ -62,12 +62,12 @@ static const co5300_lcd_init_cmd_t lcd_init_cmds[] = {
     {0x3A, (uint8_t[]){0x55}, 1, 0},
     {0x35, (uint8_t[]){0x00}, 1, 0},
     {0x53, (uint8_t[]){0x20}, 1, 0},
-    {0x51, (uint8_t[]){0xFF}, 1, 0},
+    {0x51, (uint8_t[]){0x00}, 1, 0}, // YA: dark until the first complete frame
     {0x63, (uint8_t[]){0xFF}, 1, 0},
     {0x2A, (uint8_t[]){0x00, 0x00, 0x01, 0xDF}, 4, 0},
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xDF}, 4, 0},
     {0x36, (uint8_t[]){0xA0}, 1, 0},
-    {0x29, (uint8_t[]){0x00}, 0, 600},
+    {0x28, (uint8_t[]){0x00}, 0, 0}, // YA: enable output only after startup rendering
 };
 
 #define BSP_I2S_DUPLEX_MONO_CFG(_sample_rate)                                                         \
@@ -334,8 +334,7 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
 
 esp_err_t bsp_display_brightness_init(void)
 {
-    bsp_display_brightness_set(100);
-    return ESP_OK;
+    return bsp_display_brightness_set(0);
 }
 
 esp_err_t bsp_display_brightness_set(int brightness_percent)
@@ -352,14 +351,13 @@ esp_err_t bsp_display_brightness_set(int brightness_percent)
         return ESP_ERR_INVALID_ARG;
     }
 
-    brightness = (uint8_t)(brightness_percent * 255 / 100);
-
     uint32_t lcd_cmd = 0x51;
     lcd_cmd &= 0xff;
     lcd_cmd <<= 8;
     lcd_cmd |= 0x02 << 24;
-    uint8_t param = brightness;
-    esp_lcd_panel_io_tx_param(io_handle, lcd_cmd, &param, 1);
+    uint8_t param = (uint8_t)(brightness_percent * 255 / 100);
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io_handle, lcd_cmd, &param, 1), TAG, "brightness command failed");
+    brightness = param;
 
     return ESP_OK;
 }
@@ -452,9 +450,9 @@ esp_err_t bsp_display_new(const bsp_display_config_t *config, esp_lcd_panel_hand
         .vendor_config = &vendor_config,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_co5300(io_handle, &panel_config, &panel_handle));
-    esp_lcd_panel_reset(panel_handle);
-    esp_lcd_panel_init(panel_handle);
-    esp_lcd_panel_disp_on_off(panel_handle, false);
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel_handle), TAG, "panel reset failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel_handle), TAG, "panel init failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(panel_handle, false), TAG, "panel output off failed");
 
     if (ret_panel)
     {
@@ -642,7 +640,7 @@ void bsp_display_unlock(void)
     esp_lv_adapter_unlock();
 }
 
-// YA: called only after adapter pause has drained display transfers.
+// YA: callers pause the adapter before sending panel commands.
 esp_err_t bsp_display_sleep_set(bool sleeping) {
     return panel_handle ? esp_lcd_panel_disp_on_off(panel_handle, !sleeping) : ESP_ERR_INVALID_STATE;
 }

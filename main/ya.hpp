@@ -240,6 +240,7 @@ void display_metrics_init();
 DisplayMetrics display_metrics_snapshot();
 void display_metrics_reset();
 extern std::atomic<int> requested_scroll;
+esp_err_t ui_boot_start(); // called after display setup, before remaining board/services I/O
 void ui_start();
 void ui_home();
 void ui_settings(lv_obj_t *);
